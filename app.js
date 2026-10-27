@@ -31,13 +31,13 @@ let P = null;          // payload
 let U = [];            // unidades
 let OP = [];           // unidades operacionais (com rota, coordenada e anúncio)
 let END = new Map();   // endereço (parada) -> resumo
-const params = { cons: 10, hora: 25, tr: 1.3, par: 10, ch: 0, lim: 100, lav: true, fuel: {} };
+const params = { cons: 10, hora: 25, tr: 1.3, par: 10, ch: 0, lim: 100, lav: false, fuel: {} };
 
 /* ---------------- parâmetros ---------------- */
 function loadParams() {
   params.fuel = { ...P.combustivel };
-  try { const s = JSON.parse(localStorage.getItem("raiox-params-v3") || "{}"); Object.assign(params, s, { fuel: { ...P.combustivel, ...(s.fuel || {}) } }); } catch (e) {}
-  const save = () => { try { localStorage.setItem("raiox-params-v3", JSON.stringify(params)); } catch (e) {} };
+  try { const s = JSON.parse(localStorage.getItem("raiox-params-v4") || "{}"); Object.assign(params, s, { fuel: { ...P.combustivel, ...(s.fuel || {}) } }); } catch (e) {}
+  const save = () => { try { localStorage.setItem("raiox-params-v4", JSON.stringify(params)); } catch (e) {} };
   const map = { pCons: "cons", pHora: "hora", pTr: "tr", pPar: "par", pCh: "ch", pLim: "lim" };
   for (const [id, k] of Object.entries(map)) {
     const el = document.getElementById(id);
@@ -183,7 +183,7 @@ function renderKpis() {
   $("#kpis").innerHTML = `
     <div class="kpi"><span class="k">Imóveis analisados</span><span class="v">${OP.length}</span><span class="s">em ${END.size} endereços · ${U.length - OP.length} de fora (sem rota operacional, sem coordenada ou sem anúncio na Stays)</span></div>
     <div class="kpi bad"><span class="k">Remover</span><span class="v">${rem.length}</span><span class="s">${endRem.length ? `${endRem.length} endereços que não pagam a ida. Tirar economiza ${brl.format(-sum(endRem, (e) => e.resultado))}/mês` : "Nenhum endereço deixa de pagar a própria ida com os parâmetros atuais"}</span></div>
-    <div class="kpi bad"><span class="k">Renegociar</span><span class="v">${ren.length}</span><span class="s">Prejuízo direto somado: ${brl.format(-sum(ren, (u) => u.margemDireta))}/mês</span></div>
+    <div class="kpi bad"><span class="k">Renegociar</span><span class="v">${ren.length}</span><span class="s">${ren.length ? `Prejuízo direto somado: ${brl.format(-sum(ren, (u) => u.margemDireta))}/mês` : "Nenhum imóvel dá prejuízo depois de limpeza e chamados"}</span></div>
     <div class="kpi warn"><span class="k">Atenção</span><span class="v">${at.length}</span><span class="s">Endereço mal se paga ou chamados acima do normal</span></div>
     <div class="kpi new"><span class="k">Maturando</span><span class="v">${mat.length}</span><span class="s">${mat.filter((u) => u.locRuim).length} em endereço que hoje não paga a ida</span></div>
     <div class="kpi"><span class="k">Custo de deslocamento</span><span class="v">${brl.format(custoTotal)}</span><span class="s">por mês, em todos os endereços: ${pct(custoTotal / (sum(OP, (u) => u.receitaCD) || 1))} do que fica para a Carpediem</span></div>`;
@@ -588,7 +588,7 @@ function renderMetodo() {
   <ul>
     <li><b>Taxa de administração</b> = % de comissão da Mastertable × valor das diárias.</li>
     <li><b>Taxa de limpeza</b> conta como receita quando o formato é "Recolhe".</li>
-    <li><b>Custo de limpeza</b> = número de reservas × (custo de limpeza + custo de lavanderia da Mastertable). A lavanderia pode ser desligada em Parâmetros.</li>
+    <li><b>Custo de limpeza</b> = número de reservas × custo de limpeza da Mastertable. A lavanderia fica fora por padrão, porque o custo varia por rota; dá para incluir em Parâmetros.</li>
     <li><b>Chamados:</b> só a parte do custo lançado no Jestor (material + mão de obra + terceirizada) que não foi cobrada do proprietário. Hoje 83% dos chamados com valor têm custo líquido zero para a Carpediem.</li>
   </ul>
   <h2>O custo de ir até o endereço</h2>
