@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Raio-X de Rotas · Carpediem</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="style.css?v=2">
+</head>
+<body>
+
+<div id="loginGate" class="gate">
+  <form id="loginForm" class="gate-card">
+    <div class="brand"><span class="brand-mark"></span>Carpediem · Raio-X de Rotas</div>
+    <h1>Entrar</h1>
+    <p class="muted">Acesso restrito a e-mails @carpediemhomes.com.br.</p>
+    <label for="loginEmail">E-mail</label>
+    <input id="loginEmail" type="email" autocomplete="username" required>
+    <label for="loginPassword">Senha</label>
+    <input id="loginPassword" type="password" autocomplete="current-password" required>
+    <div id="loginError" class="gate-msg"></div>
+    <button id="btnLogin" class="btn primary" type="submit">Entrar</button>
+    <button id="btnForgot" class="btn link" type="button">Esqueci minha senha</button>
+  </form>
+</div>
+
+<div id="appRoot" hidden>
+  <header class="top">
+    <div class="top-row">
+      <div class="brand"><span class="brand-mark"></span>Raio-X de Rotas</div>
+      <nav id="tabs" class="tabs">
+        <button class="tab active" data-tab="decisao">Decisão</button>
+        <button class="tab" data-tab="mapa">Mapa das rotas</button>
+        <button class="tab" data-tab="roteiro">Roteirizador</button>
+        <button class="tab" data-tab="predios">Prédios</button>
+        <button class="tab" data-tab="metodo">Como calculamos</button>
+      </nav>
+      <div class="top-right">
+        <button id="btnParams" class="btn ghost" type="button">Parâmetros</button>
+        <span id="userEmailLabel" class="muted small"></span>
+        <button id="btnLogout" class="btn ghost" type="button">Sair</button>
+      </div>
+    </div>
+    <div id="paramsPanel" class="params" hidden>
+      <div class="param"><label for="pKm">Combustível e desgaste por km (R$)</label><input id="pKm" type="number" step="0.1" min="0" value="1.2"></div>
+      <div class="param"><label for="pHora">Custo da equipe por hora (R$)</label><input id="pHora" type="number" step="5" min="0" value="40"></div>
+      <div class="param"><label for="pVel">Velocidade média na rota (km/h)</label><input id="pVel" type="number" step="1" min="5" value="20"></div>
+      <div class="param"><label for="pCh">Custo médio por chamado (R$)</label><input id="pCh" type="number" step="5" min="0" value="80"></div>
+      <div class="param"><label for="pCorte">Corte para remover (índice)</label><input id="pCorte" type="number" step="1" min="0" max="100" value="70"></div>
+      <div class="param"><label for="wM">Peso margem</label><input id="wM" type="range" min="0" max="100" value="45"><span class="pv" data-for="wM"></span></div>
+      <div class="param"><label for="wD">Peso desvio de rota</label><input id="wD" type="range" min="0" max="100" value="25"><span class="pv" data-for="wD"></span></div>
+      <div class="param"><label for="wC">Peso chamados</label><input id="wC" type="range" min="0" max="100" value="15"><span class="pv" data-for="wC"></span></div>
+      <div class="param"><label for="wI">Peso isolamento</label><input id="wI" type="range" min="0" max="100" value="15"><span class="pv" data-for="wI"></span></div>
+      <p class="muted small">As mudanças recalculam tudo na hora e ficam salvas só neste navegador.</p>
+    </div>
+  </header>
+
+  <main id="panels">
+    <section id="tab-decisao" class="panel">
+      <div id="kpis" class="kpis"></div>
+      <div class="filters">
+        <select id="fRota" aria-label="Rota"></select>
+        <select id="fClasse" aria-label="Classificação">
+          <option value="">Todas as classificações</option>
+          <option value="remover">Remover ou renegociar</option>
+          <option value="atencao">Atenção</option>
+          <option value="saudavel">Saudável</option>
+          <option value="maturando">Maturando</option>
+        </select>
+        <input id="fBusca" type="search" placeholder="Buscar imóvel, prédio ou bairro">
+        <label class="chk"><input id="fOutra" type="checkbox"> Só os mais perto de outra rota</label>
+        <span id="fCount" class="muted small"></span>
+      </div>
+      <div class="table-wrap"><table id="tbl" class="tbl"></table></div>
+    </section>
+
+    <section id="tab-mapa" class="panel" hidden>
+      <div class="map-layout">
+        <aside class="side">
+          <label for="mRota" class="lbl">Rota</label>
+          <select id="mRota"></select>
+          <div class="seg" id="mCor">
+            <button data-v="classe" class="on">Cor por classificação</button>
+            <button data-v="score">Cor por índice</button>
+          </div>
+          <div id="mLegend" class="legend"></div>
+          <div id="mResumo" class="resumo"></div>
+          <div id="mSim" class="sim"></div>
+        </aside>
+        <div id="map" class="map"></div>
+      </div>
+    </section>
+
+    <section id="tab-roteiro" class="panel" hidden>
+      <div class="map-layout">
+        <aside class="side">
+          <label for="rRota" class="lbl">Rota</label>
+          <select id="rRota"></select>
+          <label for="rEnd" class="lbl">Ponto de partida</label>
+          <div class="addr">
+            <input id="rEnd" type="text" placeholder="Endereço, ex.: Av. Boa Viagem, 1000, Recife">
+            <button id="rBusca" class="btn primary" type="button">Buscar</button>
+          </div>
+          <p class="muted small">Ou clique no mapa para marcar a partida.</p>
+          <div class="seg" id="rModo">
+            <button data-v="volta" class="on">Volta à partida</button>
+            <button data-v="aberta">Termina na última parada</button>
+          </div>
+          <label class="chk"><input id="rSemRem" type="checkbox"> Tirar os imóveis "Remover"</label>
+          <button id="rCalc" class="btn primary wide" type="button" disabled>Calcular rota ótima</button>
+          <div id="rOut" class="rout"></div>
+        </aside>
+        <div id="rmap" class="map"></div>
+      </div>
+    </section>
+
+    <section id="tab-predios" class="panel" hidden>
+      <p class="lead">Cada linha é um endereço onde a equipe para. Quanto mais imóveis no mesmo endereço, menor o custo de deslocamento de cada um. Um studio que fatura pouco pode valer a pena por estar num prédio cheio.</p>
+      <div class="filters">
+        <select id="pRota" aria-label="Rota"></select>
+        <select id="pMin" aria-label="Tamanho"><option value="1">Todos os endereços</option><option value="2">2+ imóveis</option><option value="5" selected>5+ imóveis</option><option value="10">10+ imóveis</option></select>
+      </div>
+      <div class="table-wrap"><table id="ptbl" class="tbl"></table></div>
+    </section>
+
+    <section id="tab-metodo" class="panel prose" hidden></section>
+  </main>
+
+  <div id="drawer" class="drawer" hidden>
+    <button id="drawerClose" class="btn ghost close" type="button" aria-label="Fechar">✕</button>
+    <div id="drawerBody"></div>
+  </div>
+  <div id="loading" class="loading">Carregando dados…</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script type="module" src="app.js?v=2"></script>
+</body>
+</html>
