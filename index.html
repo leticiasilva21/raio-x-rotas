@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 
@@ -45,15 +45,14 @@
       </div>
     </div>
     <div id="paramsPanel" class="params" hidden>
-      <div class="param"><label for="pKm">Combustível e desgaste por km (R$)</label><input id="pKm" type="number" step="0.1" min="0" value="1.2"></div>
-      <div class="param"><label for="pHora">Custo da equipe por hora (R$)</label><input id="pHora" type="number" step="5" min="0" value="40"></div>
-      <div class="param"><label for="pVel">Velocidade média na rota (km/h)</label><input id="pVel" type="number" step="1" min="5" value="20"></div>
-      <div class="param"><label for="pCh">Custo médio por chamado (R$)</label><input id="pCh" type="number" step="5" min="0" value="80"></div>
-      <div class="param"><label for="pCorte">Corte para remover (índice)</label><input id="pCorte" type="number" step="1" min="0" max="100" value="70"></div>
-      <div class="param"><label for="wM">Peso margem</label><input id="wM" type="range" min="0" max="100" value="45"><span class="pv" data-for="wM"></span></div>
-      <div class="param"><label for="wD">Peso desvio de rota</label><input id="wD" type="range" min="0" max="100" value="25"><span class="pv" data-for="wD"></span></div>
-      <div class="param"><label for="wC">Peso chamados</label><input id="wC" type="range" min="0" max="100" value="15"><span class="pv" data-for="wC"></span></div>
-      <div class="param"><label for="wI">Peso isolamento</label><input id="wI" type="range" min="0" max="100" value="15"><span class="pv" data-for="wI"></span></div>
+      <div class="param"><label for="pCons">Consumo do carro (km/l)</label><input id="pCons" type="number" step="0.5" min="1" value="10"></div>
+      <div class="param"><label for="pHora">Custo da equipe por hora (R$)</label><input id="pHora" type="number" step="1" min="0" value="25"></div>
+      <div class="param"><label for="pTr">Trânsito: tempo real ÷ tempo do mapa</label><input id="pTr" type="number" step="0.1" min="1" value="1.3"></div>
+      <div class="param"><label for="pPar">Tempo parado por endereço visitado (min)</label><input id="pPar" type="number" step="1" min="0" value="10"></div>
+      <div class="param"><label for="pCh">Custo extra por chamado (R$)</label><input id="pCh" type="number" step="5" min="0" value="0"></div>
+      <div class="param"><label for="pLim">Endereço "mal se paga" abaixo de (R$/mês)</label><input id="pLim" type="number" step="10" min="0" value="100"></div>
+      <div class="param"><label class="chk" for="pLav"><input id="pLav" type="checkbox" checked> Contar lavanderia no custo da limpeza</label></div>
+      <div class="param fuel"><label>Gasolina por estado (R$/litro, ANP out/2026)</label><div id="fuelInputs" class="fuel-grid"></div></div>
       <p class="muted small">As mudanças recalculam tudo na hora e ficam salvas só neste navegador.</p>
     </div>
   </header>
@@ -65,9 +64,10 @@
         <select id="fRota" aria-label="Rota"></select>
         <select id="fClasse" aria-label="Classificação">
           <option value="">Todas as classificações</option>
-          <option value="remover">Remover ou renegociar</option>
+          <option value="remover">Remover</option>
+          <option value="renegociar">Renegociar</option>
           <option value="atencao">Atenção</option>
-          <option value="saudavel">Saudável</option>
+          <option value="manter">Manter</option>
           <option value="maturando">Maturando</option>
         </select>
         <input id="fBusca" type="search" placeholder="Buscar imóvel, prédio ou bairro">
@@ -82,10 +82,6 @@
         <aside class="side">
           <label for="mRota" class="lbl">Rota</label>
           <select id="mRota"></select>
-          <div class="seg" id="mCor">
-            <button data-v="classe" class="on">Cor por classificação</button>
-            <button data-v="score">Cor por índice</button>
-          </div>
           <div id="mLegend" class="legend"></div>
           <div id="mResumo" class="resumo"></div>
           <div id="mSim" class="sim"></div>
@@ -109,7 +105,7 @@
             <button data-v="volta" class="on">Volta à partida</button>
             <button data-v="aberta">Termina na última parada</button>
           </div>
-          <label class="chk"><input id="rSemRem" type="checkbox"> Tirar os imóveis "Remover"</label>
+          <label class="chk"><input id="rSemRem" type="checkbox"> Tirar os endereços marcados "Remover"</label>
           <button id="rCalc" class="btn primary wide" type="button" disabled>Calcular rota ótima</button>
           <div id="rOut" class="rout"></div>
         </aside>
@@ -137,6 +133,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script type="module" src="app.js?v=2"></script>
+<script type="module" src="app.js?v=4"></script>
 </body>
 </html>

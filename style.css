@@ -99,6 +99,8 @@ main { padding: 20px max(16px, env(safe-area-inset-left)) 40px; max-width: 1600p
 .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .pill.remover { background: var(--bad-soft); color: var(--bad); }
+.pill.renegociar { background: #FCE9D9; color: #B4540F; }
+.pill.manter { background: var(--ok-soft); color: var(--ok); }
 .pill.atencao { background: var(--warn-soft); color: #94650a; }
 .pill.saudavel { background: var(--ok-soft); color: var(--ok); }
 .pill.maturando { background: var(--new-soft); color: var(--new); }
@@ -170,3 +172,18 @@ main { padding: 20px max(16px, env(safe-area-inset-left)) 40px; max-width: 1600p
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 .tiles-soft { filter: saturate(.55) brightness(1.04); }
+
+.params .fuel { grid-column: 1 / -1; }
+.fuel-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.fuel-grid label { display: flex; align-items: center; gap: 4px; font-family: var(--mono); color: var(--ink); }
+.fuel-grid input { width: 74px; padding: 5px 6px; }
+.motivo { white-space: normal; min-width: 260px; max-width: 380px; font-size: 12.5px; color: var(--ink-2); }
+.why { border-radius: 8px; padding: 12px 14px; margin: 10px 0; font-size: 13.5px; }
+.why.remover { background: var(--bad-soft); } .why.renegociar { background: #FCE9D9; } .why.atencao { background: var(--warn-soft); }
+.why.manter { background: var(--ok-soft); } .why.maturando { background: var(--new-soft); }
+.why ul { margin: 6px 0 0; padding-left: 18px; } .why li { margin: 3px 0; }
+.calc { width: 100%; border-collapse: collapse; font-size: 13px; }
+.calc td { padding: 4px 0; border-bottom: 1px dashed var(--line); }
+.calc td:last-child { text-align: right; font-family: var(--mono); white-space: nowrap; padding-left: 12px; }
+.calc tr.tot td { font-weight: 600; border-bottom: 0; border-top: 1px solid var(--ink-3); }
+.calc .sub { color: var(--ink-3); font-size: 11.5px; display: block; }
