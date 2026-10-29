@@ -1023,7 +1023,7 @@ function renderMetodo() {
     linha("Troca", "1 imóvel a substituir por 1 entrada de perfil parecido no condomínio (mesmo número de quartos ou studio, até 1 hóspede de diferença; capacidade e quartos da Stays), pela média desses imóveis lá; lucro a mais = margem de contribuição de lá − a do imóvel que sai (fixos e estrutura não mudam)"),
     linha("Cenário da região", "cada imóvel a substituir vira a média dos imóveis de perfil parecido nos 5 melhores condomínios da região com 2+ imóveis"),
     linha(pill("manter"), "fica"),
-    linha(pill("maturando"), "menos de 3 meses desde o início; não entra na decisão"),
+    linha(pill("maturando"), "menos de 3 meses desde o início (cadastro, ativação ou volta à base depois de 30+ dias como Inativo na Mastertable); não entra na decisão"),
     linha(pill("atencao"), "sem reservas no período: conferir o anúncio"),
     linha("Fora da estrutura", "despesas pagas a definir, enxoval em estoque, impostos de DP, férias e rescisões"),
   ])}
