@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
 
@@ -48,7 +48,7 @@
       </div>
     </div>
     <div id="paramsPanel" class="params" hidden>
-      <div class="param"><label for="pMeta">Meta de margem por imóvel (%)</label><input id="pMeta" type="number" step="1" min="0" max="90" value="30"></div>
+      <div class="param"><label for="pMeta">Meta de margem por imóvel (%)</label><input id="pMeta" type="number" step="1" min="0" max="90" value="10"></div>
       <div class="param"><label for="pRateio">Rateio da estrutura</label><select id="pRateio"><option value="igual">Igual por imóvel</option><option value="receita">Proporcional à receita</option></select></div>
       <div class="param"><label for="pKm">% do transporte rateado pelos km a mais</label><input id="pKm" type="number" step="5" min="0" max="100" value="50"></div>
       <p class="muted small">As mudanças recalculam tudo na hora e ficam salvas só neste navegador.</p>
@@ -57,10 +57,10 @@
       <div class="dre-row">
         <div>
           <b>Atualizar a DRE por rota</b>
-          <p class="muted small">Exporte a planilha da DRE como CSV (separado por ponto e vírgula) e escolha o arquivo. O sistema lê só os totais por rota e por grupo de despesa; nomes e salários não saem do seu computador. Meses sem custos de rota lançados contam como projeção e repetem o último mês fechado até o mês atual.</p>
+          <p class="muted small">Escolha a planilha da DRE em Excel (.xlsx), a mesma com as abas Despesas, Resultado - Taxa de Limpeza e Resumo mensal. O sistema lê só os totais por rota e por grupo; nomes e salários não saem do seu computador. Meses sem custos de rota lançados contam como projeção e repetem o último mês fechado até o mês atual.</p>
         </div>
         <label class="btn primary file-btn" for="dreFile">Escolher arquivo</label>
-        <input id="dreFile" type="file" accept=".csv,text/csv" hidden>
+        <input id="dreFile" type="file" accept=".xlsx,.csv" hidden>
       </div>
       <div id="drePreview"></div>
     </div>
@@ -162,6 +162,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script type="module" src="app.js?v=12"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script type="module" src="app.js?v=13"></script>
 </body>
 </html>

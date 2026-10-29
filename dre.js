@@ -1,5 +1,5 @@
-// Leitura da DRE por rota (CSV exportado da planilha, separado por ";") e médias mensais usadas no rateio.
-// Guarda só totais por rota e por grupo de despesa: nomes e salários individuais nunca saem do arquivo.
+// Leitura da DRE (planilha .xlsx completa ou CSV da aba Despesas) e médias mensais usadas no rateio.
+// Guarda só totais por rota e por grupo: nomes e salários individuais nunca saem do arquivo.
 
 const MES = { jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6, jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12 };
 const ROTA_CAMPOS = {
@@ -8,21 +8,29 @@ const ROTA_CAMPOS = {
 };
 const GRUPOS = [["ext", "CUSTO | OPERAÇÕES EXTERNAS"], ["int", "CUSTO | OPERAÇÕES INTERNAS"], ["adm", "DESPESAS | ADMINISTRATIVAS"],
   ["com", "DESPESAS | COMERCIAIS"], ["fin", "DESPESAS | FINANCEIRAS"], ["pes", "DESPESAS | PESSOAS"]];
+const ABA_DESPESAS = "Despesas", ABA_LIMPEZA = "Resultado - Taxa de Limpeza", ABA_RESUMO = "Resumo mensal";
 
+/** Chave de rota que casa Mastertable ("Rota da Cidade do Sol") e DRE ("RN - Rota Ciade do Sol", "RN - Cidade do Sol"). */
 export function normRota(s) {
   return String(s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase()
-    .replace(/^.*?rota/, "rota").replace("ciade", "cidade").replace(/\b(da|do|dos|das|de)\b/g, " ").replace(/\s+/g, " ").trim();
+    .replace(/^\s*[a-z]{2}\s*-\s*([a-z]{2,4}\s*-\s*)?/, "").replace(/\brota\b/g, " ").replace("ciade", "cidade")
+    .replace(/\b(da|do|dos|das|de)\b/g, " ").replace(/\s+/g, " ").trim();
 }
 function valor(s) {
-  s = String(s || "").replace("R$", "").replace(/\s/g, "");
+  if (typeof s === "number") return isFinite(s) ? s : 0;
+  s = String(s ?? "").replace("R$", "").replace(/\s/g, "");
   if (!s || s === "-" || s === "-,00") return 0;
   const neg = s.startsWith("-") || s.startsWith("(");
   s = s.replace(/[-()]/g, "").replace(/\./g, "").replace(",", ".");
   const v = parseFloat(s);
   return isFinite(v) ? (neg ? -v : v) : 0;
 }
-function linhas(texto) {
-  // CSV simples com ";" e aspas
+function mesDe(c) {
+  if (c instanceof Date) { const d = new Date(c.getTime() + 12 * 3600e3); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; }
+  const m = String(c ?? "").trim().toLowerCase().match(/^([a-zç]{3})\w*\s+(\d{4})$/);
+  return m && MES[m[1]] ? `${m[2]}-${String(MES[m[1]]).padStart(2, "0")}` : null;
+}
+function csvLinhas(texto) {
   const out = [];
   for (const raw of texto.split(/\r?\n/)) {
     const row = []; let cur = "", q = false;
@@ -36,23 +44,20 @@ function linhas(texto) {
   }
   return out;
 }
+const txt = (v) => String(v ?? "").trim();
 
-/** Lê o texto do CSV e devolve a DRE mensal (ou lança erro com a explicação). */
-export function parseDre(texto, arquivo) {
-  const rows = linhas(texto);
-  const lab = (r) => (r[1] || "").trim();
+/** Aba Despesas (ou o CSV dela): grupos, rotas (operações externas) e dispêndios totais. */
+function lerDespesas(rows) {
+  const lab = (r) => txt(r[1]);
   const head = rows.find((r) => lab(r).toLowerCase() === "em");
-  if (!head) throw new Error("Não achei a linha dos meses (a que começa com \"em\" e traz jan 2026, fev 2026…).");
+  if (!head) throw new Error("Não achei a linha dos meses (a que começa com \"em\") na aba Despesas.");
   const cols = [];
-  head.forEach((c, i) => {
-    const m = String(c).trim().toLowerCase().match(/^([a-zç]{3})\w*\s+(\d{4})$/);
-    if (m && MES[m[1]]) cols.push({ i, mes: `${m[2]}-${String(MES[m[1]]).padStart(2, "0")}` });
-  });
-  if (!cols.length) throw new Error("A linha dos meses não tem nenhum mês no formato \"jan 2026\".");
+  head.forEach((c, i) => { const m = i >= 2 && mesDe(c); if (m) cols.push({ i, mes: m }); });
+  if (!cols.length) throw new Error("A linha dos meses da aba Despesas não tem nenhum mês reconhecível.");
   const serie = (r) => cols.map((c) => valor(r[c.i]));
   const start = rows.findIndex((r, i) => i > 50 && lab(r).startsWith("CUSTO | OPERA") && lab(r).includes("EXTERNAS"));
   const end = rows.findIndex((r, i) => i > start && lab(r).startsWith("CUSTO | OPERA") && lab(r).includes("INTERNAS"));
-  if (start < 0 || end < 0) throw new Error("Não achei o bloco \"CUSTO | OPERAÇÕES EXTERNAS\" com as rotas, no fim da planilha.");
+  if (start < 0 || end < 0) throw new Error("Não achei o bloco \"CUSTO | OPERAÇÕES EXTERNAS\" com as rotas, no fim da aba Despesas.");
   const rotas = {};
   let cur = null;
   for (const r of rows.slice(start + 1, end)) {
@@ -68,11 +73,64 @@ export function parseDre(texto, arquivo) {
     if (l.startsWith("DISPÊNDIOS TOTAIS") || l.startsWith("DISPENDIOS TOTAIS")) total = serie(r);
     for (const [k, p] of GRUPOS) if (l.startsWith(p) && !grupos[k]) grupos[k] = serie(r);
   }
-  for (const [k] of GRUPOS) if (!grupos[k]) throw new Error(`Não achei a linha do grupo ${GRUPOS.find((g) => g[0] === k)[1]} no topo da planilha.`);
-  const meses = cols.map((c) => c.mes);
+  for (const [k, p] of GRUPOS) if (!grupos[k]) throw new Error(`Não achei a linha ${p} no topo da aba Despesas.`);
+  return { meses: cols.map((c) => c.mes), rotas, grupos, total };
+}
+
+/** Aba "Resultado - Taxa de Limpeza": faturamento, equipe de limpeza e terceirizados (lavanderia, material, limpeza) por rota. */
+function lerLimpeza(rows, meses) {
+  const hi = rows.findIndex((r) => txt(r[0]).toLowerCase() === "rota" && txt(r[1]).toLowerCase() === "linha");
+  if (hi < 0) return null;
+  const ano = meses[0].slice(0, 4);
+  const NOMES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+  const cols = [];
+  rows[hi].forEach((c, i) => {
+    const k = NOMES.indexOf(txt(c).toLowerCase());
+    if (k >= 0) { const j = meses.indexOf(`${ano}-${String(k + 1).padStart(2, "0")}`); if (j >= 0) cols.push({ i, j }); }
+  });
+  const serie = (r) => { const s = meses.map(() => 0); cols.forEach(({ i, j }) => (s[j] = valor(r[i]))); return s; };
+  const out = {};
+  let cur = null;
+  for (const r of rows.slice(hi + 1)) {
+    const a = txt(r[0]), b = txt(r[1]);
+    if (a && !b) { cur = { nome: a }; out[normRota(a)] = cur; continue; }
+    if (!cur || !b) continue;
+    if (b.startsWith("(+) Faturamento")) cur.faturamento = serie(r);
+    else if (b.startsWith("(-) Custo da equipe")) cur.equipe = serie(r);
+    else if (b.startsWith("(-) Custo da operação")) cur.terceirizada = serie(r);
+  }
+  return out;
+}
+
+/** Aba "Resumo mensal": receita bruta e impostos sobre vendas, para a alíquota efetiva. */
+function lerImpostos(rows) {
+  const head = rows.find((r) => txt(r[1]).toLowerCase() === "em");
+  if (!head) return null;
+  const cols = [];
+  head.forEach((c, i) => { const m = i >= 2 && mesDe(c); if (m) cols.push({ i, mes: m }); });
+  const serie = (r) => cols.map((c) => valor(r[c.i]));
+  let receita = null; const imp = cols.map(() => 0);
+  for (const r of rows) {
+    const l = txt(r[1]);
+    if (l === "RECEITA BRUTA" && !receita) receita = serie(r);
+    if (/^ISS\b|^Imposto sobre vendas/i.test(l)) serie(r).forEach((v, j) => (imp[j] += v));
+  }
+  return receita ? { meses: cols.map((c) => c.mes), receita_bruta: receita, impostos: imp } : null;
+}
+
+/**
+ * Lê a DRE. `entrada` pode ser o texto de um CSV (aba Despesas) ou um objeto {abas: {nome: linhas[][]}} vindo do .xlsx.
+ * Devolve a DRE mensal (ou lança erro com a explicação).
+ */
+export function parseDre(entrada, arquivo) {
+  const abas = typeof entrada === "string" ? { [ABA_DESPESAS]: csvLinhas(entrada) } : entrada.abas;
+  if (!abas[ABA_DESPESAS]) throw new Error(`A planilha não tem a aba "${ABA_DESPESAS}".`);
+  const { meses, rotas, grupos, total } = lerDespesas(abas[ABA_DESPESAS]);
+  const limpeza = abas[ABA_LIMPEZA] ? lerLimpeza(abas[ABA_LIMPEZA], meses) : null;
+  const impostos = abas[ABA_RESUMO] ? lerImpostos(abas[ABA_RESUMO]) : null;
   const somaRotas = meses.map((_, j) => Object.values(rotas).reduce((s, v) => s + (v.total[j] || 0), 0));
   const somaGrupos = meses.map((_, j) => GRUPOS.reduce((s, [k]) => s + grupos[k][j], 0));
-  if (!total) total = somaGrupos;
+  const tot = total || somaGrupos;
   // mês fechado = rotas com transporte e ponto de apoio lançados (projeções vêm sem eles)
   const real = meses.map((_, j) => Object.values(rotas).reduce((s, v) => s + (v.transporte?.[j] || 0), 0) > 0
     && Object.values(rotas).reduce((s, v) => s + (v.ponto_apoio?.[j] || 0), 0) > 0);
@@ -80,10 +138,20 @@ export function parseDre(texto, arquivo) {
   meses.forEach((m, j) => {
     if (!real[j]) return;
     if (Math.abs(somaRotas[j] - grupos.ext[j]) > 1) avisos.push(`${m}: a soma das rotas (${somaRotas[j].toFixed(2)}) não bate com Operações externas (${grupos.ext[j].toFixed(2)}).`);
-    if (Math.abs(somaGrupos[j] - total[j]) > 1) avisos.push(`${m}: a soma dos grupos não bate com Dispêndios totais.`);
+    if (Math.abs(somaGrupos[j] - tot[j]) > 1) avisos.push(`${m}: a soma dos grupos não bate com Dispêndios totais.`);
   });
   if (!real.some(Boolean)) throw new Error("Nenhum mês tem custos de rota lançados (transporte e ponto de apoio).");
-  return { arquivo: arquivo || null, meses, real, rotas, grupos, total, avisos };
+  if (!limpeza) avisos.push(`Sem a aba "${ABA_LIMPEZA}": os custos de equipe de limpeza e terceirizados (lavanderia, material, limpeza) ficam de fora. Envie a planilha .xlsx completa.`);
+  if (!impostos) avisos.push(`Sem a aba "${ABA_RESUMO}": os impostos sobre vendas ficam de fora.`);
+  return { arquivo: arquivo || null, meses, real, rotas, grupos, total: tot, limpeza, impostos, avisos };
+}
+
+/** Converte um workbook do SheetJS no formato que parseDre espera (só as abas usadas). */
+export function abasDoXlsx(wb, XLSX) {
+  const abas = {};
+  for (const nome of [ABA_DESPESAS, ABA_LIMPEZA, ABA_RESUMO])
+    if (wb.Sheets[nome]) abas[nome] = XLSX.utils.sheet_to_json(wb.Sheets[nome], { header: 1, raw: true, defval: null });
+  return { abas };
 }
 
 /** Meses usados: os fechados + os seguintes até o mês atual, repetindo o último mês fechado; só os que têm receita. */
@@ -106,7 +174,16 @@ export function mediasDre(dre, usados) {
   const rotas = {};
   for (const [k, v] of Object.entries(dre.rotas))
     rotas[k] = { nome_dre: v.nome_dre, total: avg(v.total), pessoal: avg(v.pessoal), ponto_apoio: avg(v.ponto_apoio), transporte: avg(v.transporte), imoveis: avg(v.imoveis) };
+  const limpeza = {};
+  for (const [k, v] of Object.entries(dre.limpeza || {}))
+    limpeza[k] = { nome: v.nome, faturamento: avg(v.faturamento), equipe: avg(v.equipe), terceirizada: avg(v.terceirizada) };
   const grupos = Object.fromEntries(Object.entries(dre.grupos).map(([k, v]) => [k, avg(v)]));
   const estrutura = Object.entries(grupos).filter(([k]) => k !== "ext").reduce((s, [, v]) => s + v, 0);
-  return { rotas, grupos, estrutura, total: avg(dre.total) };
+  let aliquota = 0;
+  if (dre.impostos) {
+    const cols = usados.map((u) => dre.impostos.meses.indexOf(dre.meses[u.col])).filter((i) => i >= 0);
+    const rec = cols.reduce((s, i) => s + dre.impostos.receita_bruta[i], 0), imp = cols.reduce((s, i) => s + dre.impostos.impostos[i], 0);
+    aliquota = rec > 0 ? imp / rec : 0;
+  }
+  return { rotas, limpeza, grupos, estrutura, total: avg(dre.total), aliquota };
 }
