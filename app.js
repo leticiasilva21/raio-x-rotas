@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { parseDre, mesesUsados, mediasDre, normRota } from "./dre.js?v=1";
 
 const SUPABASE_URL = "https://ucavfotyciwnqwurzjny.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjYXZmb3R5Y2l3bnF3dXJ6am55Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc5NzUzNjYsImV4cCI6MjA3MzU1MTM2Nn0.nE_W8wZZvJfzlvhP83ge1J0ooS3EcFVSlQYK28eTGU0";
@@ -38,12 +39,14 @@ let U = [];            // unidades
 let OP = [];           // unidades operacionais (com rota, coordenada e anúncio)
 let END = new Map();   // endereço (parada) -> resumo
 let ROT = new Map();   // rota -> resumo
-const params = { meta: 20, rateio: "igual", pkm: 50 };
+let D = null;          // médias da DRE no período usado
+let USADOS = [];       // meses do período: {mes, col, estimado}
+const params = { meta: 30, rateio: "igual", pkm: 50 };
 
 /* ---------------- parâmetros ---------------- */
 function loadParams() {
-  try { Object.assign(params, JSON.parse(localStorage.getItem("raiox-params-v5") || "{}")); } catch (e) {}
-  const save = () => { try { localStorage.setItem("raiox-params-v5", JSON.stringify(params)); } catch (e) {} };
+  try { Object.assign(params, JSON.parse(localStorage.getItem("raiox-params-v6") || "{}")); } catch (e) {}
+  const save = () => { try { localStorage.setItem("raiox-params-v6", JSON.stringify(params)); } catch (e) {} };
   const bind = (id, k, num) => {
     const el = document.getElementById(id);
     el.value = params[k];
@@ -56,8 +59,17 @@ const viagens = (visitas) => 30 * (1 - Math.exp(-visitas / 30));
 
 /* ---------------- cálculo ---------------- */
 function periodo() {
-  const idx = P.dre.meses.map((m) => P.meses.indexOf(m)).filter((i) => i >= 0);
-  return idx;
+  USADOS = mesesUsados(P.dre, P.meses);
+  D = mediasDre(P.dre, USADOS);
+  return USADOS.map((x) => P.meses.indexOf(x.mes));
+}
+const dreRota = (rota) => D.rotas[normRota(rota)];
+const mesTxt = (m) => MES_NOME[+m.slice(5) - 1] + "/" + m.slice(2, 4);
+function periodoTxt() {
+  if (!USADOS.length) return "—";
+  const est = USADOS.filter((x) => x.estimado);
+  const ultReal = P.dre.meses[P.dre.real.lastIndexOf(true)];
+  return `${mesTxt(USADOS[0].mes)} a ${mesTxt(USADOS.at(-1).mes)}` + (est.length ? ` (${est.map((x) => mesTxt(x.mes)).join(", ")} repetem ${mesTxt(ultReal)})` : "");
 }
 function recompute() {
   const idx = periodo();
@@ -71,7 +83,7 @@ function recompute() {
     u.receitaCD = u.admP + u.limpP;
     u.visitas = u.resP + u.ch_mes;
     u.op = !NAO_OPERACIONAIS.has(u.rota) && u.lat != null && u.parada != null && !u.sem_stays;
-    u.temRotaDre = !!P.dre.rotas[u.rota];
+    u.temRotaDre = !!dreRota(u.rota);
   }
   OP = U.filter((u) => u.op);
   // endereços (para km e quem paga o transporte)
@@ -89,7 +101,8 @@ function recompute() {
   }
   // rateio do custo direto de cada rota (DRE)
   ROT = new Map();
-  for (const [rota, d] of Object.entries(P.dre.rotas)) {
+  for (const rota of new Set(U.map((u) => u.rota).filter((r) => dreRota(r)))) {
+    const d = dreRota(rota);
     const us = U.filter((u) => u.rota === rota && !u.sem_stays);
     const ops = us.filter((u) => u.op);
     const V = sum(us, (u) => u.visitas) || 1, C = sum(us, (u) => u.ch_mes);
@@ -114,7 +127,7 @@ function recompute() {
   for (const u of U) {
     if (!u.temRotaDre || u.sem_stays) { u.cPessoal = u.cApoio = u.cTranspVis = u.cTranspKm = u.cImoveis = u.kmU = 0; }
     u.custoRota = u.cPessoal + u.cApoio + u.cTranspVis + u.cTranspKm + u.cImoveis;
-    u.estrutura = u.sem_stays ? 0 : params.rateio === "igual" ? P.dre.estrutura / nImoveis : P.dre.estrutura * (u.receitaCD / recTot);
+    u.estrutura = u.sem_stays ? 0 : params.rateio === "igual" ? D.estrutura / nImoveis : D.estrutura * (u.receitaCD / recTot);
     u.lucro = u.receitaCD - u.custoRota - u.estrutura;
     u.margem = u.receitaCD > 0 ? u.lucro / u.receitaCD : -Infinity;
     u.contribuicao = u.receitaCD - u.custoRota;
@@ -147,7 +160,7 @@ function classify(u, e, chP90) {
   let classe = "manter";
   if (!u.novo && u.receitaCD <= 0) {
     classe = "atencao";
-    m.push(["atencao", "Nenhuma reserva em jan–ago/2026 neste cadastro. Confira se as reservas estão caindo em outro anúncio na Stays antes de decidir."]);
+    m.push(["atencao", "Nenhuma reserva no período neste cadastro. Confira se as reservas estão caindo em outro anúncio na Stays antes de decidir."]);
   } else if (u.lucro < 0) {
     classe = "remover";
     m.push(["remover", `Dá prejuízo com os custos rateados: entram ${brl.format(u.receitaCD)}/mês e saem ${brl.format(u.custoRota)} da rota + ${brl.format(u.estrutura)} de estrutura (${brl.format(u.lucro)}/mês).`]);
@@ -223,7 +236,7 @@ function renderKpis() {
   const eSair = ends.filter((e) => e.classe === "sair"), eRever = ends.filter((e) => e.classe === "rever");
   const rec = sum(U, (u) => u.receitaCD), luc = sum(U, (u) => u.lucro);
   $("#kpis").innerHTML = `
-    <div class="kpi"><span class="k">Resultado da operação (jan–ago/26)</span><span class="v">${brl.format(luc)}</span><span class="s">por mês: ${brl.format(rec)} ficam para a Carpediem − ${brl.format(P.dre.total)} de dispêndios. Margem ${pct(luc / rec)}</span></div>
+    <div class="kpi"><span class="k">Resultado da operação</span><span class="v">${brl.format(luc)}</span><span class="s">por mês: ${brl.format(rec)} ficam para a Carpediem − ${brl.format(D.total)} de dispêndios. Margem ${pct(luc / rec)}. Período ${periodoTxt()}</span></div>
     <div class="kpi bad"><span class="k">Remover</span><span class="v">${rem.length}</span><span class="s">Dão prejuízo com custos rateados: ${brl.format(sum(rem, (u) => u.lucro))}/mês somados</span></div>
     <div class="kpi warn"><span class="k">Abaixo da meta (${params.meta}%)</span><span class="v">${ab.length}</span><span class="s">Lucram, mas pouco: ${brl.format(sum(ab, (u) => u.lucro))}/mês somados</span></div>
     <div class="kpi bad"><span class="k">Endereços</span><span class="v">${eSair.length} / ${eRever.length}</span><span class="s">${eSair.length} dão prejuízo no todo · ${eRever.length} abaixo da meta, de ${ends.length} endereços</span></div>
@@ -279,7 +292,7 @@ function openUnit(id) {
     <p>${u.op ? pill(u.classe) : ""} ${e && e.n > 1 ? pillEnd(e.classe) : ""}</p>
     <p class="small"><b>${esc(u.endNome || stopName([u]))}</b> · ${esc(u.endereco || "")}</p>
     ${why}
-    <h3>A conta do imóvel (média por mês, jan–ago/2026${u.mesesP < 8 ? `, ${u.mesesP} meses ativos` : ""})</h3>
+    <h3>A conta do imóvel (média por mês, ${periodoTxt()}${u.mesesP < USADOS.length ? `, ${u.mesesP} meses ativos` : ""})</h3>
     <table class="calc">
       <tr><td>Receita bruta<span class="sub">total pago pelos hóspedes</span></td><td>${brl.format(u.brutaP)}</td></tr>
       <tr><td>Taxa de administração<span class="sub">${pct(u.taxa)} das diárias</span></td><td>${brl.format(u.admP)}</td></tr>
@@ -291,7 +304,7 @@ function openUnit(id) {
       <tr><td>Transporte da rota, parte pelos km<span class="sub">${params.pkm}% do transporte, pelo km a mais que o endereço exige (${n1.format(u.kmU)} km/mês dele)</span></td><td>−${brl.format(u.cTranspKm)}</td></tr>
       <tr><td>Custo com imóveis da rota<span class="sub">pelos chamados (${n2.format(u.ch_mes)}/mês)</span></td><td>−${brl.format(u.cImoveis)}</td></tr>
       <tr class="tot"><td>Contribuição (depois da rota)</td><td class="${u.contribuicao < 0 ? "neg" : ""}">${brl.format(u.contribuicao)}</td></tr>
-      <tr><td>Estrutura da empresa<span class="sub">${params.rateio === "igual" ? `${brl.format(P.dre.estrutura)}/mês ÷ ${U.filter((x) => !x.sem_stays).length} imóveis` : "proporcional ao que fica para a Carpediem"}</span></td><td>−${brl.format(u.estrutura)}</td></tr>
+      <tr><td>Estrutura da empresa<span class="sub">${params.rateio === "igual" ? `${brl.format(D.estrutura)}/mês ÷ ${U.filter((x) => !x.sem_stays).length} imóveis` : "proporcional ao que fica para a Carpediem"}</span></td><td>−${brl.format(u.estrutura)}</td></tr>
       <tr class="tot"><td>Lucro do imóvel</td><td class="${u.lucro < 0 ? "neg" : ""}">${brl.format(u.lucro)} · ${pct(u.margem)}</td></tr>
       ${e && e.n > 1 ? `<tr class="tot"><td>Endereço inteiro (${e.n} imóveis)</td><td class="${e.resultado < 0 ? "neg" : ""}">${brl.format(e.resultado)} · ${pct(e.margem)}</td></tr>` : ""}
     </table>
@@ -662,14 +675,14 @@ function renderSemRota() {
 
 /* ---------------- aba Como calculamos ---------------- */
 function renderMetodo() {
-  const g = P.dre.grupos;
+  const g = D.grupos;
   $("#tab-metodo").innerHTML = `
   <h2>A conta de cada imóvel</h2>
-  <p><b>Lucro = o que fica para a Carpediem − custo direto da rota − estrutura da empresa.</b> Tudo em média por mês de jan a ago/2026, os meses fechados da DRE. Imóvel cadastrado no meio do período usa só os meses em que estava ativo.</p>
+  <p><b>Lucro = o que fica para a Carpediem − custo direto da rota − estrutura da empresa.</b> Tudo em média por mês no período da DRE: ${periodoTxt()}. Imóvel cadastrado no meio do período usa só os meses em que estava ativo.</p>
   <ul>
     <li><b>Fica para a Carpediem:</b> taxa de administração (% de comissão da Mastertable × diárias) + taxa de limpeza recolhida, das reservas da Stays.</li>
     <li><b>Custo direto da rota:</b> o bloco "Operações externas" da DRE de cada rota (pessoal da operação, ponto de apoio, transporte e custo com imóveis), ${brl.format(g.ext)}/mês no total. Pessoal e ponto de apoio são divididos pelas visitas de cada imóvel (limpezas + chamados). O transporte é dividido ${100 - params.pkm}% pelas visitas e ${params.pkm}% pelos km a mais que cada endereço exige da rota. O custo com imóveis é dividido pelos chamados.</li>
-    <li><b>Estrutura:</b> todo o resto dos dispêndios (operações internas ${brl.format(g.int)}, administrativo ${brl.format(g.adm)}, comercial/marketing ${brl.format(g.com)}, financeiro ${brl.format(g.fin)} e pessoas ${brl.format(g.pes)}), ${brl.format(P.dre.estrutura)}/mês. ${params.rateio === "igual" ? "Dividida igualmente entre os imóveis: cada imóvel consome atendimento, sistemas, financeiro e suporte, fature pouco ou muito." : "Dividida proporcionalmente ao que cada imóvel deixa para a Carpediem."}</li>
+    <li><b>Estrutura:</b> todo o resto dos dispêndios (operações internas ${brl.format(g.int)}, administrativo ${brl.format(g.adm)}, comercial/marketing ${brl.format(g.com)}, financeiro ${brl.format(g.fin)} e pessoas ${brl.format(g.pes)}), ${brl.format(D.estrutura)}/mês. ${params.rateio === "igual" ? "Dividida igualmente entre os imóveis: cada imóvel consome atendimento, sistemas, financeiro e suporte, fature pouco ou muito." : "Dividida proporcionalmente ao que cada imóvel deixa para a Carpediem."}</li>
   </ul>
   <h2>Decisão do imóvel</h2>
   <ol>
@@ -688,12 +701,64 @@ function renderMetodo() {
   <p>Simulamos 400 dias de cada rota: cada endereço entra no dia com a chance real de ter visita, a equipe sai do endereço com mais visitas e fazemos a rota mais curta do dia por ruas reais (vizinho mais próximo, 2-opt e Or-opt). O km a mais de um endereço é quanto aquela rota encurtaria sem ele, na média dos dias em que ele aparece.</p>
   <h2>Fontes</h2>
   <ul>
-    <li>DRE por rota (jan–ago/2026, dispêndios ${brl.format(P.dre.total)}/mês). Set–dez são projeção e ficam de fora.</li>
+    <li>DRE por rota${P.dre.arquivo ? ` (arquivo ${esc(P.dre.arquivo)}${P.dre.enviado_por ? `, enviado por ${esc(P.dre.enviado_por)}` : ""}${P.dre.enviado_em ? ` em ${fmtData(P.dre.enviado_em.slice(0, 10))}` : ""})` : ""}: período ${periodoTxt()}, dispêndios de ${brl.format(D.total)}/mês. Um mês conta como fechado quando as rotas têm transporte e ponto de apoio lançados; os meses seguintes, até o mês atual, repetem o último mês fechado. Meses sem reservas baixadas ficam de fora.</li>
     <li>Imóveis e rotas: Mastertable do Jestor (status Ativo). Proprietário, Terceirizada e imóveis sem rota não têm custo de rota, só estrutura; estão listados na aba Sem rota.</li>
     <li>Reservas da Stays sem canceladas e sem uso do proprietário. Em prédios (grupos-clone) a receita do grupo é dividida igualmente entre as unidades. Anúncios duplicados (individual + prédio) viram um imóvel só.</li>
     <li>Chamados: manutenções do Jestor de out/2025 a set/2026, por mês.</li>
   </ul>
   <p class="small muted">Snapshot gerado em ${fmtData(P.gerado)}.</p>`;
+}
+
+
+/* ---------------- atualizar DRE ---------------- */
+let dreNova = null;
+function previewDre(dre) {
+  const usados = mesesUsados(dre, P.meses);
+  const usadoSet = new Map(usados.map((x) => [x.mes, x]));
+  const rotasMt = [...new Set(U.map((u) => u.rota).filter((r) => r && !NAO_OPERACIONAIS.has(r)))];
+  const semDre = rotasMt.filter((r) => !dre.rotas[normRota(r)]);
+  const semMt = Object.entries(dre.rotas).filter(([k]) => !rotasMt.some((r) => normRota(r) === k)).map(([, v]) => v.nome_dre);
+  const m = mediasDre(dre, usados);
+  $("#drePreview").innerHTML = `
+    <div class="mes-grid">${dre.meses.map((mes, j) => {
+      const u = usadoSet.get(mes);
+      const semRes = !P.meses.includes(mes);
+      const cls = dre.real[j] && !semRes ? "" : u ? "est" : "proj";
+      const t = dre.real[j] ? (semRes ? "fechado, entra quando as reservas forem atualizadas" : `fechado · ${brl.format(dre.total[j])}`) : u ? `repete ${mesTxt(dre.meses[u.col])}` : "projeção, fora";
+      return `<span class="mes-chip ${cls}" title="${t}">${mesTxt(mes)} · ${t}</span>`;
+    }).join("")}</div>
+    <p class="dre-msg">Arquivo ${esc(dre.arquivo)}: ${Object.keys(dre.rotas).length} rotas. No período usado, dispêndios de ${brl.format(m.total)}/mês (rotas ${brl.format(m.grupos.ext)}, estrutura ${brl.format(m.estrutura)}).</p>
+    ${dre.avisos.length ? `<p class="dre-msg err">${dre.avisos.map(esc).join("<br>")}</p>` : '<p class="dre-msg">As somas batem: rotas = Operações externas e grupos = Dispêndios totais em todos os meses fechados.</p>'}
+    ${semDre.length ? `<p class="dre-msg err">Rotas da Mastertable sem linha na DRE (ficam só com estrutura): ${semDre.map(esc).join(", ")}.</p>` : ""}
+    ${semMt.length ? `<p class="dre-msg err">Rotas da DRE sem imóveis na Mastertable: ${semMt.map(esc).join(", ")}.</p>` : ""}
+    <div class="dre-row"><span class="muted small">Confira os meses acima antes de salvar. A versão anterior fica guardada no histórico.</span>
+    <button id="dreSalvar" class="btn primary" type="button">Salvar e recalcular</button></div>`;
+  $("#dreSalvar").addEventListener("click", salvarDre);
+}
+function lerDre(file) {
+  const r = new FileReader();
+  r.onload = () => {
+    try { dreNova = parseDre(r.result, file.name); previewDre(dreNova); }
+    catch (err) { dreNova = null; $("#drePreview").innerHTML = `<p class="dre-msg err">${esc(err.message)}</p>`; }
+  };
+  r.readAsText(file, "ISO-8859-1");
+}
+async function salvarDre() {
+  if (!dreNova) return;
+  const b = $("#dreSalvar"); b.disabled = true; b.textContent = "Salvando…";
+  const nova = { ...dreNova, enviado_em: new Date().toISOString() };
+  if (!LOCAL) {
+    const { data, error } = await supabase.rpc("pricing_raio_x_rotas_set_dre", { p_dre: nova });
+    if (error) {
+      b.disabled = false; b.textContent = "Salvar e recalcular";
+      $("#drePreview").insertAdjacentHTML("beforeend", `<p class="dre-msg err">${error.code === "42501" ? "Seu e-mail não tem permissão para atualizar a DRE. Peça a liberação para a Leticia." : "Não foi possível salvar agora. Tente de novo em instantes."}</p>`);
+      return;
+    }
+    nova.enviado_por = data?.enviado_por || null;
+  }
+  P.dre = nova; dreNova = null;
+  recompute();
+  $("#drePreview").innerHTML = `<p class="dre-msg">DRE salva e tudo recalculado. Período agora: ${esc(periodoTxt())}.</p>`;
 }
 
 /* ---------------- navegação ---------------- */
@@ -708,7 +773,9 @@ function wire() {
     try { history.replaceState(null, "", "#" + b.dataset.tab); } catch (e) {}
     renderAll();
   }));
-  $("#btnParams").addEventListener("click", () => ($("#paramsPanel").hidden = !$("#paramsPanel").hidden));
+  $("#btnParams").addEventListener("click", () => { $("#paramsPanel").hidden = !$("#paramsPanel").hidden; $("#drePanel").hidden = true; });
+  $("#btnDre").addEventListener("click", () => { $("#drePanel").hidden = !$("#drePanel").hidden; $("#paramsPanel").hidden = true; });
+  $("#dreFile").addEventListener("change", (e) => { const f = e.target.files[0]; if (f) lerDre(f); e.target.value = ""; });
   ["#fRota", "#fClasse", "#fOutra", "#fEnd"].forEach((s) => $(s).addEventListener("change", renderTable));
   $("#fBusca").addEventListener("input", renderTable);
   $("#tbl").addEventListener("click", (e) => {
@@ -735,6 +802,7 @@ async function start(payload) {
   P = payload; U = P.unidades.map((u) => ({ ...u }));
   $("#loading").hidden = true;
   wire(); loadParams(); recompute();
+  if (LOCAL) window.__raiox = { U: () => U, OP: () => OP, END: () => END };
   const h = location.hash.slice(1);
   if (h) document.querySelector(`.tab[data-tab="${h}"]`)?.click();
 }

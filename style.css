@@ -198,3 +198,15 @@ main { padding: 20px max(16px, env(safe-area-inset-left)) 40px; max-width: 1600p
 .tabs::-webkit-scrollbar { display: none; }
 .tab { white-space: nowrap; padding-inline: 10px; }
 @media (max-width: 860px) { .top-row { flex-wrap: wrap; } .tabs { order: 3; flex-basis: 100%; } }
+
+.dre-panel { border-top: 1px solid var(--line); padding: 14px 0 16px; display: flex; flex-direction: column; gap: 12px; }
+.dre-row { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.dre-row > div { max-width: 80ch; min-width: 0; }
+.dre-row p { margin: 4px 0 0; }
+.file-btn { cursor: pointer; white-space: nowrap; }
+.mes-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.mes-chip { font: 500 12px var(--mono); padding: 4px 8px; border-radius: 6px; background: var(--ok-soft); color: var(--ok); }
+.mes-chip.proj { background: #EEF0EA; color: var(--ink-3); }
+.mes-chip.est { background: var(--warn-soft); color: #94650a; }
+.dre-msg { font-size: 13px; }
+.dre-msg.err { color: var(--bad); }
