@@ -342,7 +342,8 @@ function montarCaptacao() {
     rs.forEach((r) => REG.set(r, reg));
     const conds = [...END.values()].filter((e) => rs.includes(e.rota)).map((e) => {
       const m = e.us.filter((u) => !u.novo && u.receitaCD > 0);
-      if (!m.length || (m.length === 1 && !m[0].empreend)) return null;   // 1 imóvel só conta se for condomínio
+      // só condomínios e prédios: casa avulsa (tipo "Casa" na Mastertable) não é alvo de captação; 1 imóvel só conta se tiver empreendimento
+      if (!m.length || m.every((u) => u.tipo === "Casa") || (m.length === 1 && !m[0].empreend)) return null;
       const k = m.length, s = (f) => sum(m, f) / k;
       const c = { e, k, rec: s((u) => u.receitaCD), mc: s((u) => u.mc), lucro: s((u) => u.lucro), horas: s((u) => u.horas) };
       c.lucroPct = c.rec > 0 ? c.lucro / c.rec : -Infinity;
@@ -984,7 +985,7 @@ function renderMetodo() {
     linha(pill("substituir"), `margem de contribuição positiva, mas margem de lucro abaixo de ${params.sub}% (Parâmetros): paga o que consome e fica longe de pagar fixos da rota e estrutura. Tirar sem repor piora o resultado; troca por uma entrada num condomínio prioritário`),
     linha("Horas de equipe", `custo da equipe usada pelo imóvel (3) ÷ ${brl2.format(salario() / 220)}/h`),
     linha("Região", `rotas do mesmo estado com centro a até ${VIZ_KM} km uma da outra; podem dividir e redimensionar equipe`),
-    linha("Condomínio prioritário", "condomínio com imóveis maduros e lucro positivo, ordenado pelo lucro médio por imóvel; com 1 imóvel só, marcado como amostra pequena"),
+    linha("Condomínio prioritário", "condomínio ou prédio com imóveis maduros e lucro positivo, ordenado pelo lucro médio por imóvel; casas avulsas ficam fora; com 1 imóvel só, marcado como amostra pequena"),
     linha("Troca", "1 imóvel a substituir por 1 entrada no condomínio, pela média por imóvel de lá; lucro a mais = margem de contribuição de lá − a do imóvel que sai (fixos e estrutura não mudam)"),
     linha("Cenário da região", "cada imóvel a substituir vira um imóvel na média dos 5 melhores condomínios da região com 2+ imóveis"),
     linha(pill("manter"), "fica"),
