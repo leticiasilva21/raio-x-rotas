@@ -52,6 +52,7 @@
       <div class="param"><label for="pEquipe">Equipe ao tirar imóveis</label><select id="pEquipe"><option value="prop">Acompanha o volume (médio prazo)</option><option value="inteiras">Só pessoas inteiras (curto prazo)</option></select></div>
       <div class="param"><label for="pMeta">Meta de margem de contribuição da rota (%)</label><input id="pMeta" type="number" step="1" min="0" max="90" value="35"></div>
       <div class="param"><label for="pSub">Substituir quando a margem de lucro do imóvel for abaixo de (%)</label><input id="pSub" type="number" step="5" min="-200" max="0" value="-30"></div>
+      <div class="param"><label for="pGap">Meses sem nenhuma reserva antes de voltar a vender (3+), sem Inativo na Mastertable</label><select id="pGap"><option value="contar">Contam como zero (pode ser imóvel ruim)</option><option value="tirar">Saem da média (estava fora da base)</option></select></div>
       <div class="param"><label for="pRateio">Rateio da estrutura</label><select id="pRateio"><option value="igual">Igual por imóvel</option><option value="receita">Proporcional à receita</option></select></div>
       <div class="param"><label for="pSal">Custo por pessoa da equipe de campo (R$/mês; vazio = calculado da DRE)</label><input id="pSal" type="number" step="50" min="0"></div>
       <div class="param"><label for="pCons">Consumo do carro (km/l)</label><input id="pCons" type="number" step="0.5" min="1" value="10"></div>
@@ -95,6 +96,7 @@
         </select>
         <input id="fBusca" type="search" placeholder="Buscar imóvel, prédio ou bairro">
         <label class="chk"><input id="fOutra" type="checkbox"> Só os que podem trocar de rota</label>
+        <label class="chk"><input id="fVolta" type="checkbox"> Só os que saíram e voltaram</label>
         <span id="fCount" class="muted small"></span>
       </div>
       <div class="table-wrap"><table id="tbl" class="tbl"></table></div>
@@ -176,6 +178,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script type="module" src="app.js?v=30"></script>
+<script type="module" src="app.js?v=31"></script>
 </body>
 </html>

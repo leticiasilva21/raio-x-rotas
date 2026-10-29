@@ -45,7 +45,7 @@ let D = null;          // médias da DRE no período usado
 let USADOS = [];       // meses do período: {mes, col, estimado}
 let REG = new Map();   // rota -> região (rotas vizinhas que podem dividir equipe)
 let CAPTAR = new Map(); // região -> condomínios prioritários para entrada
-const params = { equipeProp: "prop", meta: 35, sub: -30, rateio: "igual", pkm: 50, sal: null, cons: 10, tr: 1.3, hLimp: 2, hQuarto: 0.5, hCh: 1 };
+const params = { equipeProp: "prop", meta: 35, sub: -30, gap: "contar", rateio: "igual", pkm: 50, sal: null, cons: 10, tr: 1.3, hLimp: 2, hQuarto: 0.5, hCh: 1 };
 const PONTO_EMPRESA = new Set(["cidade sol"]);   // ponto de apoio de Natal (Living Tirol) atende a empresa inteira: vai para a estrutura
 const salario = () => params.sal || D?.salarioCampo || 2500;
 const precoGas = (uf) => (P.combustivel || {})[uf] ?? (P.combustivel || {})._BR ?? 6.6;
@@ -59,7 +59,7 @@ function loadParams() {
     el.value = params[k];
     el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => { params[k] = num ? parseFloat(el.value) || 0 : el.value; save(); recompute(); });
   };
-  bind("pMeta", "meta", true); bind("pSub", "sub", true); bind("pEquipe", "equipeProp", false); bind("pRateio", "rateio", false); bind("pKm", "pkm", true); { const el = $("#pSal"); el.value = params.sal ?? ""; el.addEventListener("input", () => { params.sal = parseFloat(el.value) || null; try { localStorage.setItem("raiox-params-v11", JSON.stringify(params)); } catch (e) {} recompute(); }); } bind("pCons", "cons", true); bind("pTr", "tr", true);
+  bind("pMeta", "meta", true); bind("pSub", "sub", true); bind("pGap", "gap", false); bind("pEquipe", "equipeProp", false); bind("pRateio", "rateio", false); bind("pKm", "pkm", true); { const el = $("#pSal"); el.value = params.sal ?? ""; el.addEventListener("input", () => { params.sal = parseFloat(el.value) || null; try { localStorage.setItem("raiox-params-v11", JSON.stringify(params)); } catch (e) {} recompute(); }); } bind("pCons", "cons", true); bind("pTr", "tr", true);
 }
 // dias com ao menos uma visita no mês: visitas no mesmo dia viram uma viagem só
 const viagens = (visitas) => 30 * (1 - Math.exp(-visitas / 30));
@@ -81,9 +81,15 @@ function periodoTxt() {
 function recompute() {
   const idx = periodo();
   for (const u of U) {
-    const ini = (u.inicio || u.criado || "2000-01").slice(0, 7);
-    const ativos = idx.filter((i) => P.meses[i] >= ini);
-    const n = ativos.length || 0;
+    // peso de cada mês = fração do mês em que o imóvel estava na base (Inativo no Jestor fica fora;
+    // meses zerados antes da retomada saem só se o parâmetro mandar)
+    u.peso = P.meses.map((m, i) => {
+      if (m < (u.inicio || u.criado || "2000-01").slice(0, 7)) return 0;
+      if (params.gap === "tirar" && u.gap && m >= u.gap[0] && m <= u.gap[1]) return 0;
+      return u.base_mes ? u.base_mes[i] : 1;
+    });
+    const ativos = idx.filter((i) => u.peso[i] > 0);
+    const n = sum(ativos, (i) => u.peso[i]);
     const avg = (k) => (n ? sum(ativos, (i) => u.serie[i][k]) / n : 0);
     u.mesesP = n;
     u.brutaP = avg(0); u.admP = avg(1); u.limpP = avg(2); u.resP = avg(3);
@@ -120,7 +126,7 @@ function recompute() {
     let somaCusto = 0, somaV = 0, somaZ = 0, somaLimp = 0, somaF = 0, somaT = 0;
     for (const { mes, col } of USADOS) {
       const i = P.meses.indexOf(mes);
-      const act = us.filter((u) => mes >= (u.inicio || u.criado || "2000-01").slice(0, 7));
+      const act = us.filter((u) => u.peso[i] > 0);
       const [resR, chR] = rm[mes] || [0, 0];
       const Vr = Math.max(resR + chR, sum(act, (u) => visU(u, i))) || 1;
       const Zr = Math.max(resR, sum(act, (u) => u.serie[i][3] || 0)) || 1;
@@ -305,6 +311,8 @@ function classify(u, e, chP90) {
   if (u.outra_rota && u.viz_km > 1 && u.outra_km < u.viz_km * 0.5) {
     m.push(["troca", `Fica a ${n1.format(u.outra_km)} km de uma parada da ${u.outra_rota} e a ${n1.format(u.viz_km)} km da parada mais próxima da própria rota. Vale avaliar a troca.`]);
   }
+  if (u.fora?.length) m.push(["info", `Fora da base (Inativo na Mastertable): ${u.fora.map(([a, b]) => a <= P.meses[0] + "-01" ? `já estava fora em ${mesTxt(P.meses[0])} e voltou em ${b ? fmtData(b) : "—"}` : `${fmtData(a)} a ${b ? fmtData(b) : "hoje"}`).join(", ")}. Esses dias não entram na média.`]);
+  if (u.gap) m.push(["info", `Sem nenhuma reserva de ${mesTxt(u.gap[0])} a ${mesTxt(u.gap[1])} e depois voltou a vender, sem inativação registrada na Mastertable. ${params.gap === "tirar" ? "Esses meses estão fora da média (Parâmetros)." : "Esses meses contam na média como zero. Se ele estava fora da base, marque Inativo na Mastertable ou mude em Parâmetros."}`]);
   if (u.novo) {
     const regra = classe;
     classe = "maturando";
@@ -437,8 +445,8 @@ function renderKpis() {
     <div class="kpi new"><span class="k">Maturando</span><span class="v">${mat.length}</span><span class="s">menos de 3 meses: não entram na decisão. ${OP.filter((u) => u.trocaRota).length} podem trocar de rota</span></div>`;
 }
 function renderTable() {
-  const rota = $("#fRota").value, classe = $("#fClasse").value, q = $("#fBusca").value.trim().toLowerCase(), outra = $("#fOutra").checked, ec = $("#fEnd").value;
-  let rows = OP.filter((u) => (!rota || u.rota === rota) && (!classe || u.classe === classe) && (!ec || u.endClasse === ec) && (!outra || u.trocaRota)
+  const rota = $("#fRota").value, classe = $("#fClasse").value, q = $("#fBusca").value.trim().toLowerCase(), outra = $("#fOutra").checked, ec = $("#fEnd").value, volta = $("#fVolta").checked;
+  let rows = OP.filter((u) => (!rota || u.rota === rota) && (!classe || u.classe === classe) && (!ec || u.endClasse === ec) && (!outra || u.trocaRota) && (!volta || u.fora?.length || u.gap)
     && (!q || [u.nome, u.publico, u.empreend, u.endNome, u.bairro, u.endereco].some((s) => (s || "").toLowerCase().includes(q))));
   const ord = { sair: 0, rever: 1, substituir: 2, novo: 3, manter: 4 };
   rows.sort((a, b) => {
@@ -451,7 +459,7 @@ function renderTable() {
   $("#fCount").textContent = `${rows.length} imóveis`;
   const head = "<thead><tr>" + COLS.map(([k, t, c]) => `<th data-k="${k}" class="${c || ""} ${k === sortKey ? "sorted" + (sortAsc ? " asc" : "") : ""}">${t}</th>`).join("") + "</tr></thead>";
   const body = rows.slice(0, 800).map((u) => `<tr data-id="${u.id}">
-    <td class="nome"><b>${esc(u.publico || u.nome)}</b><span>${esc(u.nome)}</span></td>
+    <td class="nome"><b>${esc(u.publico || u.nome)}</b><span>${esc(u.nome)}${u.fora?.length ? " · saiu e voltou" : u.gap ? " · saiu e voltou?" : ""}</span></td>
     <td class="nome"><b>${esc(u.endNome)}</b><span>${u.na_parada > 1 ? u.na_parada + " imóveis no endereço" : "imóvel único"}</span></td>
     <td>${esc(u.rota)}</td><td>${pill(u.classe)}</td><td class="motivo">${esc(u.motivoCurto)}</td>
     <td class="r">${brl.format(u.receitaCD)}</td><td class="r">${brl.format(u.cSai)}</td><td class="r">${brl.format(u.cEquipe)}</td>
@@ -472,7 +480,9 @@ function openUnit(id) {
   const bars = u.serie.map((s, i) => {
     const h1 = (s[0] / maxV) * (H - 24), h2 = ((s[1] + s[2]) / maxV) * (H - 24);
     const m = P.meses[i];
-    return `<g><title>${mesTxt(m)}: bruta ${brl.format(s[0])} · Carpediem ${brl.format(s[1] + s[2])} · ${n1.format(s[3])} reservas</title>
+    const fora = u.peso && u.peso[i] < 1 && m >= (u.inicio || u.criado || "2000-01").slice(0, 7);
+    return `<g ${fora && u.peso[i] === 0 ? 'opacity="0.35"' : ""}><title>${mesTxt(m)}: bruta ${brl.format(s[0])} · Carpediem ${brl.format(s[1] + s[2])} · ${n1.format(s[3])} reservas${fora ? ` · na base ${pct(u.peso[i])} do mês` : ""}</title>
+      ${fora ? `<rect x="${i * bw + 2}" y="0" width="${bw - 4}" height="${H - 18}" fill="#EDE7DC" rx="2"></rect>` : ""}
       <rect x="${i * bw + 4}" y="${H - 18 - h1}" width="${bw - 8}" height="${h1}" fill="#C9DCD9" rx="2"></rect>
       <rect x="${i * bw + 4}" y="${H - 18 - h2}" width="${bw - 8}" height="${h2}" fill="#0E6B6B" rx="2"></rect>
       <text x="${i * bw + bw / 2}" y="${H - 4}" font-size="9" text-anchor="middle" fill="#7D8A96">${mesTxt(m)}</text></g>`;
@@ -483,7 +493,7 @@ function openUnit(id) {
   const neg = (v) => (v < 0 ? "+" + brl.format(-v) : "−" + brl.format(v));
   const shareV = R ? pct(u.visitas / (R.V || 1)) : "—";
   const conta = `
-    <h3>Memória de cálculo (média por mês · ${esc(periodoTxt())}${u.mesesP < USADOS.length ? ` · ${u.mesesP} meses ativos` : ""})</h3>
+    <h3>Memória de cálculo (média por mês · ${esc(periodoTxt())}${u.mesesP < USADOS.length - 0.05 ? ` · ${n1.format(u.mesesP)} meses na base` : ""})</h3>
     <table class="calc">
       ${lin("<b>1. Receita Carpediem</b>", "", `<b>${brl.format(u.receitaCD)}</b>`)}
       ${lin("Taxa de administração", `${pct(u.taxa)} × (total da reserva − comissão do portal − taxa de limpeza) · receita bruta ${brl.format(u.brutaP)}`, brl.format(u.admP))}
@@ -523,7 +533,7 @@ function openUnit(id) {
     ${cond}
     <h3>Receita mês a mês</h3>
     <svg class="bars" viewBox="0 0 ${W} ${H}" role="img" aria-label="Receita mensal">${bars}</svg>
-    <p class="small muted"><span style="color:#8fb3ae">■</span> bruta &nbsp; <span style="color:#0E6B6B">■</span> fica para a Carpediem</p>
+    <p class="small muted"><span style="color:#8fb3ae">■</span> bruta &nbsp; <span style="color:#0E6B6B">■</span> fica para a Carpediem${u.peso?.some((p, i) => p < 1 && P.meses[i] >= (u.inicio || u.criado || "2000-01").slice(0, 7)) ? ' &nbsp; <span style="color:#d9cfbf">■</span> fora da base (todo ou parte do mês)' : ""}</p>
     <h3>Chamados de manutenção (12 meses): ${u.ch}</h3>
     ${tipos.length ? `<div class="dgrid">${tipos.map(([k, v]) => `<div><span>${esc(k)}</span><b>${v}</b></div>`).join("")}</div>
       <p class="small muted">${Object.entries(u.ch_nat || {}).map(([k, v]) => `${esc(k)}: ${v}`).join(" · ")}<br>Origem: ${Object.entries(u.ch_origem || {}).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} ${v}`).join(" · ")}</p>` : '<p class="muted small">Nenhum chamado no período.</p>'}
@@ -968,7 +978,9 @@ function renderMetodo() {
     linha("Taxa de limpeza", "valor cobrado do hóspede, quando o formato é \"Recolhe\""),
     linha("Fora da conta", "canceladas e uso do proprietário"),
     linha("Prédios (grupo na Stays)", "receita do grupo ÷ unidades distintas"),
-    linha("Média mensal", "só meses desde o início do imóvel (cadastro na Stays ou ativação na Mastertable)"),
+    linha("Média mensal", "receita ÷ meses na base, desde o início do imóvel (cadastro na Stays ou ativação na Mastertable)"),
+    linha("Meses na base", "histórico de status da Mastertable (Jestor): dias como Inativo não contam; mês parcial conta pela fração de dias"),
+    linha("Saiu e voltou?", `3+ meses seguidos sem nenhuma reserva e depois voltou a vender, sem Inativo registrado: ${params.gap === "tirar" ? "esses meses saem da média" : "contam como zero (pode ser imóvel ruim); mude em Parâmetros"}`),
   ])}
   ${bloco("3. Custo da rota (DRE, dividido entre os imóveis da rota)", [
     linha("Deslocamento: combustível", `idas × km ida e volta do ponto operacional ÷ ${n1.format(params.cons)} km/l × gasolina do estado`),
@@ -1095,7 +1107,7 @@ function wire() {
   $("#btnParams").addEventListener("click", () => { $("#paramsPanel").hidden = !$("#paramsPanel").hidden; $("#drePanel").hidden = true; });
   $("#btnDre").addEventListener("click", () => { $("#drePanel").hidden = !$("#drePanel").hidden; $("#paramsPanel").hidden = true; });
   $("#dreFile").addEventListener("change", (e) => { const f = e.target.files[0]; if (f) lerDre(f); e.target.value = ""; });
-  ["#fRota", "#fClasse", "#fOutra", "#fEnd"].forEach((s) => $(s).addEventListener("change", renderTable));
+  ["#fRota", "#fClasse", "#fOutra", "#fEnd", "#fVolta"].forEach((s) => $(s).addEventListener("change", renderTable));
   $("#fBusca").addEventListener("input", renderTable);
   $("#tbl").addEventListener("click", (e) => {
     const th = e.target.closest("th");
