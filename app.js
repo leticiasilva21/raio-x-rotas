@@ -548,13 +548,18 @@ function spread(us) {
 
 /* ---------------- aba Mapa ---------------- */
 let mapa = null, mLayer = null;
+const mOff = { u: new Set(), e: new Set() };   // status desmarcados no filtro do mapa (imóvel / endereço)
+const COR_END = { sair: "#C2402A", rever: "#E07B24", substituir: "#F0A35E", manter: "#2F8A57", novo: "#3A68B8" };
 function renderMapa() {
   if ($("#tab-mapa").hidden) return;
   if (!mapa) { mapa = baseMap("map"); mLayer = L.layerGroup().addTo(mapa); }
   fillRotaSelect($("#mRota"), "Todas as rotas");
   const rota = $("#mRota").value, porEnd = $("#mPorEnd").checked, nomes = $("#mNomes").checked;
-  const us = OP.filter((u) => !rota || u.rota === rota);
-  const ends = [...new Set(us.map((u) => u.parada))].map((id) => END.get(id));
+  const usRota = OP.filter((u) => !rota || u.rota === rota);
+  const endsRota = [...new Set(usRota.map((u) => u.parada))].map((id) => END.get(id));
+  const ends = endsRota.filter((e) => !porEnd || !mOff.e.has(e.classe));
+  const us = porEnd ? usRota.filter((u) => ends.includes(END.get(u.parada))) : usRota.filter((u) => !mOff.u.has(u.classe));
+  const endsVis = porEnd ? ends : [...new Set(us.map((u) => u.parada))].map((id) => END.get(id));
   mLayer.clearLayers();
   if (rota && P.rotas[rota]) {
     const ord = P.rotas[rota].ordem;
@@ -566,7 +571,7 @@ function renderMapa() {
   if (porEnd) {
     for (const e of ends) {
       const c = e.us[0];
-      L.circleMarker([c.lat, c.lng], { radius: 6 + Math.min(14, Math.sqrt(e.n) * 3), color: "#fff", weight: 1.5, fillColor: { sair: "#C2402A", rever: "#E07B24", manter: "#2F8A57", novo: "#3A68B8" }[e.classe], fillOpacity: 0.9 })
+      L.circleMarker([c.lat, c.lng], { radius: 6 + Math.min(14, Math.sqrt(e.n) * 3), color: "#fff", weight: 1.5, fillColor: COR_END[e.classe], fillOpacity: 0.9 })
         .bindTooltip(`<div class="tip-emp">${esc(e.nome)}</div><h4>${e.n} imóveis · ${END_CLASSE[e.classe].nome}</h4><table><tr><td>Receita Carpediem</td><td>${brl.format(e.receita)}</td></tr><tr><td>Margem de contribuição</td><td>${brl.format(e.mc)} (${pct(e.mcPct)})</td></tr><tr><td>Lucro</td><td>${brl.format(e.lucro)} (${pct(e.lucroPct)})</td></tr><tr><td>Saem</td><td>${e.us.filter((u) => u.classe === "remover").length} de ${e.n}</td></tr></table>`, { className: "tip", direction: "top", sticky: true })
         .on("click", () => openStop(e)).addTo(mLayer);
     }
@@ -577,18 +582,19 @@ function renderMapa() {
         .on("click", () => openUnit(u.id)).addTo(mLayer);
     }
   }
-  if (nomes) for (const e of ends) {
+  if (nomes) for (const e of endsVis) {
     const c = e.us[0];
     L.tooltip({ permanent: true, direction: "right", className: "stop-label", offset: [8, 0] }).setLatLng([c.lat, c.lng]).setContent(`${esc(e.nome)}${e.n > 1 ? ` (${e.n})` : ""}`).addTo(mLayer);
   }
   if (us.length) mapa.fitBounds(L.latLngBounds(us.map((u) => [u.lat, u.lng])).pad(0.08));
   setTimeout(() => mapa.invalidateSize(), 50);
-  $("#mLegend").innerHTML = porEnd
-    ? Object.entries(END_CLASSE).map(([k, c]) => `<div class="row"><span class="dot" style="background:${{ sair: "#C2402A", rever: "#E07B24", manter: "#2F8A57", novo: "#3A68B8" }[k]}"></span>${c.nome} <span class="muted">(${ends.filter((e) => e.classe === k).length})</span></div>`).join("") + '<p class="small muted">Tamanho = número de imóveis no endereço. Clique para ver os imóveis.</p>'
-    : Object.entries(CLASSE).map(([k, c]) => `<div class="row"><span class="dot" style="background:${c.cor}"></span>${c.nome} <span class="muted">(${us.filter((u) => u.classe === k).length})</span></div>`).join("") + '<p class="small muted">Tamanho = receita bruta por mês. Passe o mouse para ver o motivo, clique para a conta completa.</p>';
+  const chk = (modo, k, cor, nome, n) => `<label class="row chk-status"><input type="checkbox" data-m="${modo}" data-k="${k}" ${mOff[modo].has(k) ? "" : "checked"}><span class="dot" style="background:${cor}"></span>${nome} <span class="muted">(${n})</span></label>`;
+  $("#mLegend").innerHTML = '<div class="small muted" style="margin-bottom:4px">Filtrar por status</div>' + (porEnd
+    ? Object.entries(END_CLASSE).map(([k, c]) => chk("e", k, COR_END[k], c.nome, endsRota.filter((e) => e.classe === k).length)).join("") + '<p class="small muted">Tamanho = número de imóveis no endereço. Clique para ver os imóveis.</p>'
+    : Object.entries(CLASSE).filter(([k]) => k !== "abaixo").map(([k, c]) => chk("u", k, c.cor, c.nome, usRota.filter((u) => u.classe === k).length)).join("") + '<p class="small muted">Tamanho = receita bruta por mês. Passe o mouse para ver o motivo, clique para a conta completa.</p>');
   const R = rota ? ROT.get(rota) : null;
   $("#mResumo").innerHTML = `
-    <div class="stat"><span>Imóveis / endereços</span><b>${us.length} / ${ends.length}</b></div>
+    <div class="stat"><span>Imóveis / endereços</span><b>${us.length} / ${endsVis.length}</b></div>
     <div class="stat"><span>Fica p/ Carpediem/mês</span><b>${brl.format(sum(us, (u) => u.receitaCD))}</b></div>
     <div class="stat"><span>Custo direto da rota/mês</span><b>${brl.format(sum(us, (u) => u.custoRota))}</b></div>
     <div class="stat"><span>Impostos/mês</span><b>${brl.format(sum(us, (u) => u.impostos))}</b></div>
@@ -597,7 +603,7 @@ function renderMapa() {
     ${R ? `<div class="stat"><span>Custo da rota por visita</span><b>${brl.format(R.custoVisita)}</b></div>` : ""}`;
   if (rota && P.rotas[rota]) {
     const Rr = P.rotas[rota];
-    const eSair = ends.filter((e) => e.classe === "sair");
+    const eSair = endsRota.filter((e) => e.classe === "sair");
     const remIdx = new Set(eSair.map((e) => +e.id.split("#").pop()));
     const keep = Rr.pts.map((_, i) => i).filter((i) => !remIdx.has(i));
     let novoKm = Rr.km;
@@ -1077,6 +1083,7 @@ function wire() {
   $("#drawerClose").addEventListener("click", () => ($("#drawer").hidden = true));
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#drawer").hidden = true; });
   ["#mRota", "#mPorEnd", "#mNomes"].forEach((s) => $(s).addEventListener("change", renderMapa));
+  $("#mLegend").addEventListener("change", (ev) => { const c = ev.target.closest("input[data-k]"); if (!c) return; mOff[c.dataset.m][c.checked ? "delete" : "add"](c.dataset.k); renderMapa(); });
   $("#rRota").addEventListener("change", () => { usarPontoOperacional(); drawRouteStops(); $("#rOut").innerHTML = ""; });
   $("#rSemRem").addEventListener("change", drawRouteStops);
   $("#rBusca").addEventListener("click", geocode);
