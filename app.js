@@ -21,15 +21,15 @@ const MES_NOME = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set",
 const sum = (a, f) => a.reduce((s, x) => s + f(x), 0);
 
 const CLASSE = {
-  remover: { nome: "Remover", cor: "#C2402A", ordem: 0 },
-  abaixo: { nome: "Abaixo da meta", cor: "#E07B24", ordem: 1 },
+  remover: { nome: "Tirar", cor: "#C2402A", ordem: 0 },
+  abaixo: { nome: "Libera equipe", cor: "#E07B24", ordem: 1 },
   atencao: { nome: "Atenção", cor: "#C9A206", ordem: 2 },
   maturando: { nome: "Maturando", cor: "#3A68B8", ordem: 3 },
   manter: { nome: "Manter", cor: "#2F8A57", ordem: 4 },
 };
 const END_CLASSE = {
   sair: { nome: "Sair do endereço", css: "remover" },
-  rever: { nome: "Rever endereço", css: "abaixo" },
+  rever: { nome: "Endereço consome equipe", css: "abaixo" },
   manter: { nome: "Manter endereço", css: "manter" },
   novo: { nome: "Endereço novo", css: "maturando" },
 };
@@ -41,21 +41,21 @@ let END = new Map();   // endereço (parada) -> resumo
 let ROT = new Map();   // rota -> resumo
 let D = null;          // médias da DRE no período usado
 let USADOS = [];       // meses do período: {mes, col, estimado}
-const params = { meta: 10, rateio: "igual", pkm: 50, sal: null, cons: 10, tr: 1.3 };
+const params = { meta: 10, rateio: "igual", pkm: 50, sal: null, cons: 10, tr: 1.3, hLimp: 2, hQuarto: 0.5, hCh: 1 };
 const PONTO_EMPRESA = new Set(["cidade sol"]);   // ponto de apoio de Natal (Living Tirol) atende a empresa inteira: vai para a estrutura
 const salario = () => params.sal || D?.salarioCampo || 2500;
 const precoGas = (uf) => (P.combustivel || {})[uf] ?? (P.combustivel || {})._BR ?? 6.6;
 
 /* ---------------- parâmetros ---------------- */
 function loadParams() {
-  try { Object.assign(params, JSON.parse(localStorage.getItem("raiox-params-v9") || "{}")); } catch (e) {}
-  const save = () => { try { localStorage.setItem("raiox-params-v9", JSON.stringify(params)); } catch (e) {} };
+  try { Object.assign(params, JSON.parse(localStorage.getItem("raiox-params-v10") || "{}")); } catch (e) {}
+  const save = () => { try { localStorage.setItem("raiox-params-v10", JSON.stringify(params)); } catch (e) {} };
   const bind = (id, k, num) => {
     const el = document.getElementById(id);
     el.value = params[k];
     el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => { params[k] = num ? parseFloat(el.value) || 0 : el.value; save(); recompute(); });
   };
-  bind("pMeta", "meta", true); bind("pRateio", "rateio", false); bind("pKm", "pkm", true); { const el = $("#pSal"); el.value = params.sal ?? ""; el.addEventListener("input", () => { params.sal = parseFloat(el.value) || null; try { localStorage.setItem("raiox-params-v9", JSON.stringify(params)); } catch (e) {} recompute(); }); } bind("pCons", "cons", true); bind("pTr", "tr", true);
+  bind("pMeta", "meta", true); bind("pRateio", "rateio", false); bind("pKm", "pkm", true); { const el = $("#pSal"); el.value = params.sal ?? ""; el.addEventListener("input", () => { params.sal = parseFloat(el.value) || null; try { localStorage.setItem("raiox-params-v10", JSON.stringify(params)); } catch (e) {} recompute(); }); } bind("pCons", "cons", true); bind("pHL", "hLimp", true); bind("pHQ", "hQuarto", true); bind("pHC", "hCh", true); bind("pTr", "tr", true);
 }
 // dias com ao menos uma visita no mês: visitas no mesmo dia viram uma viagem só
 const viagens = (visitas) => 30 * (1 - Math.exp(-visitas / 30));
@@ -171,6 +171,25 @@ function recompute() {
     u.lucro = u.receitaCD - u.custoRota - u.impostos - u.estrutura;
     u.margem = u.receitaCD > 0 ? u.lucro / u.receitaCD : -Infinity;
     u.contribuicao = u.receitaCD - u.custoRota - u.impostos;
+    // visão marginal: o que some se o imóvel sair (variáveis) × o que fica (equipe da rota e estrutura)
+    u.cVar = u.impostos + u.cLimpTerc + (u.cDescComb || 0) + u.cImoveis;
+    u.contribVar = u.receitaCD - u.cVar;
+    u.cFixRota = u.cPessoal + u.cApoio + u.cTranspVis + u.cTranspKm + u.cLimpEquipe + (u.cDescTempo || 0);
+    u.hLimp = params.hLimp + params.hQuarto * Math.max(0, (u.quartos || 1) - 1);
+    u.horas = u.resP * u.hLimp + u.ch_mes * params.hCh + (u.viagensU || 0) * ((u.ida_min || 0) * params.tr / 60);
+    u.porHora = u.horas > 0 ? u.contribVar / u.horas : null;
+  }
+  // custo da hora de equipe em cada rota = equipe fixa da rota ÷ horas de trabalho que os imóveis dela geram
+  for (const R of ROT.values()) {
+    const us = R.us.filter((u) => !u.sem_stays);
+    R.horas = sum(us, (u) => u.horas); R.fixos = sum(us, (u) => u.cFixRota); R.contrib = sum(us, (u) => u.contribVar);
+    R.custoHora = R.horas > 0 ? R.fixos / R.horas : 0;
+    R.resultadoOp = R.contrib - R.fixos;
+  }
+  for (const u of U) {
+    const R = ROT.get(u.rota);
+    u.custoHora = R ? R.custoHora : 0;
+    u.resultadoOp = u.contribVar - u.horas * u.custoHora;   // contribuição depois de pagar as horas de equipe que usa
   }
   const chP90 = [...OP.map((u) => u.ch_mes)].sort((a, b) => a - b)[Math.floor(OP.length * 0.9)] || 99;
   for (const e of END.values()) {
@@ -178,16 +197,19 @@ function recompute() {
     e.custoRota = sum(e.us, (u) => u.custoRota);
     e.estrutura = sum(e.us, (u) => u.estrutura);
     e.impostos = sum(e.us, (u) => u.impostos);
-    e.resultado = sum(e.us, (u) => u.lucro);
+    e.contribVar = sum(e.us, (u) => u.contribVar);
+    e.horasEq = sum(e.us, (u) => u.horas);
+    e.resultado = sum(e.us, (u) => u.resultadoOp);
+    e.lucroCheio = sum(e.us, (u) => u.lucro);
     e.margem = e.receita > 0 ? e.resultado / e.receita : -Infinity;
     e.bruta = sum(e.us, (u) => u.brutaP);
-    e.positivos = e.us.filter((u) => u.lucro > 0);
+    e.positivos = e.us.filter((u) => u.resultadoOp > 0);
     e.todosNovos = e.us.every((u) => u.novo);
-    e.classe = e.todosNovos ? "novo" : e.resultado < 0 ? "sair" : e.margem < params.meta / 100 ? "rever" : "manter";
+    e.classe = e.todosNovos ? "novo" : e.contribVar < 0 ? "sair" : e.resultado < 0 ? "rever" : "manter";
     e.semTop = null;
     if (e.n > 1) {
-      e.top = e.us.reduce((a, u) => (u.lucro > a.lucro ? u : a), e.us[0]);
-      e.semTop = e.resultado - e.top.lucro;
+      e.top = e.us.reduce((a, u) => (u.resultadoOp > a.resultadoOp ? u : a), e.us[0]);
+      e.semTop = e.resultado - e.top.resultadoOp;
     }
   }
   for (const u of OP) classify(u, END.get(u.parada), chP90);
@@ -197,41 +219,35 @@ function recompute() {
 
 function classify(u, e, chP90) {
   const m = [];
-  const meta = params.meta / 100;
+  const R = ROT.get(u.rota);
   let classe = "manter";
+  const pessoaPct = (h) => pct(h / 220);
   if (!u.novo && u.receitaCD <= 0) {
     classe = "atencao";
     m.push(["atencao", "Nenhuma reserva no período neste cadastro. Confira se as reservas estão caindo em outro anúncio na Stays antes de decidir."]);
-  } else if (u.lucro < 0) {
+  } else if (u.contribVar < 0) {
     classe = "remover";
-    m.push(["remover", `Dá prejuízo com os custos rateados: entram ${brl.format(u.receitaCD)}/mês e saem ${brl.format(u.custoRota)} da rota + ${brl.format(u.estrutura)} de estrutura (${brl.format(u.lucro)}/mês).`]);
-  } else if (u.margem < meta) {
+    m.push(["remover", `Tirar melhora o resultado já: entram ${brl.format(u.receitaCD)}/mês e saem ${brl.format(u.cVar)} só de impostos, lavanderia/material, combustível e manutenção. Sem ele a empresa ganha ${brl.format(-u.contribVar)}/mês, mesmo sem mexer em equipe e estrutura.`]);
+  } else if (u.resultadoOp < 0) {
     classe = "abaixo";
-    m.push(["abaixo", `Lucra ${brl.format(u.lucro)}/mês, margem de ${pct(u.margem)}, abaixo da meta de ${params.meta}%. Os recursos dele renderiam mais num imóvel novo com margem maior.`]);
+    m.push(["abaixo", `Usa ${n1.format(u.horas)} h de equipe por mês e deixa ${brl.format(u.porHora)} por hora; a hora de equipe na ${u.rota} custa ${brl.format(u.custoHora)}. Tirar libera ${n1.format(u.horas)} h (${pessoaPct(u.horas)} de uma pessoa) para imóveis que pagam mais ou evita contratar.`]);
   }
   if (u.ch_mes >= chP90 && u.ch_mes > 0) {
     if (classe === "manter") classe = "atencao";
     m.push(["atencao", `Muitos chamados: ${n1.format(u.ch_mes)} por mês, entre os 10% mais altos da base.`]);
   }
-  if (classe === "manter") m.push(["manter", `Margem de ${pct(u.margem)} (${brl.format(u.lucro)}/mês) depois de pagar a parte dele na rota e na estrutura.`]);
-  // endereço
-  if (e.n > 1) {
-    const ec = END_CLASSE[e.classe].nome.toLowerCase();
-    m.push(["info", `Endereço ${e.nome}: ${e.n} imóveis, resultado ${brl.format(e.resultado)}/mês (margem ${pct(e.margem)}): ${ec}.`]);
-    if (e.semTop != null && e.resultado >= 0 && e.semTop < 0 && e.top === u) m.push(["info", "É este imóvel que sustenta o endereço: sem ele, o endereço daria prejuízo."]);
-    if (e.semTop != null && e.resultado >= 0 && e.semTop < 0 && e.top !== u) m.push(["info", `O endereço só fica positivo por causa de ${e.top.publico || e.top.nome} (${brl.format(e.top.lucro)}/mês).`]);
-  }
-  // troca de rota
+  if (classe === "manter") m.push(["manter", `Deixa ${u.porHora != null ? brl.format(u.porHora) : "—"} por hora de equipe (a hora custa ${brl.format(u.custoHora)} na rota): paga o trabalho que dá e ainda ajuda a pagar a estrutura.`]);
+  if (e.n > 1) m.push(["info", `Endereço ${e.nome}: ${e.n} imóveis, ${brl.format(e.contribVar)}/mês de contribuição e ${n1.format(e.horasEq)} h de equipe: ${END_CLASSE[e.classe].nome.toLowerCase()}.`]);
+  if (R && R.resultadoOp < 0) m.push(["info", `A ${u.rota} inteira não paga a própria equipe: os imóveis contribuem ${brl.format(R.contrib)}/mês e a equipe fixa da rota custa ${brl.format(R.fixos)}/mês.`]);
   if (u.outra_rota && u.viz_km > 1 && u.outra_km < u.viz_km * 0.5) {
     const a = ROT.get(u.rota), b = ROT.get(u.outra_rota);
-    const comp = a && b ? ` A visita custa ${brl.format(a.custoVisita)} na ${u.rota} e ${brl.format(b.custoVisita)} na ${u.outra_rota}.` : "";
+    const comp = a && b ? ` A hora de equipe custa ${brl.format(a.custoHora)} na ${u.rota} e ${brl.format(b.custoHora)} na ${u.outra_rota}.` : "";
     m.push(["troca", `Fica a ${n1.format(u.outra_km)} km de uma parada da ${u.outra_rota} e a ${n1.format(u.viz_km)} km da parada mais próxima da própria rota. Vale avaliar a troca.${comp}`]);
   }
-  if (u.kmU > 0 && e.n === 1 && u.cTranspKm > u.receitaCD * 0.1) m.push(["info", `Fora do caminho: o km a mais até ele custa ${brl.format(u.cTranspKm)}/mês de transporte.`]);
   if (u.novo) {
     const regra = classe;
     classe = "maturando";
-    m.unshift(["maturando", `${u.reativado ? `Reativado em ${fmtData(u.inicio)} (${u.inicio_motivo})` : `Começou em ${fmtData(u.inicio)} (${u.inicio_motivo})`}, ainda em maturação (menos de 6 meses).${regra === "remover" ? " Pelo resultado de hoje estaria em Remover." : regra === "abaixo" ? " Pelo resultado de hoje estaria abaixo da meta." : ""}`]);
+    m.unshift(["maturando", `${u.reativado ? `Reativado em ${fmtData(u.inicio)} (${u.inicio_motivo})` : `Começou em ${fmtData(u.inicio)} (${u.inicio_motivo})`}, ainda em maturação (menos de 6 meses).${regra === "remover" ? " Hoje ele tira dinheiro mesmo só nos custos variáveis." : regra === "abaixo" ? " Hoje ele não paga as horas de equipe que usa." : ""}`]);
     u.regraSeMaduro = regra;
   }
   u.classe = classe;
@@ -268,21 +284,26 @@ function stopName(us) {
 let sortKey = "classe", sortAsc = true;
 const COLS = [
   ["nome", "Imóvel"], ["endNome", "Empreendimento / endereço"], ["rota", "Rota"], ["classe", "Imóvel"], ["endClasse", "Endereço"], ["motivoCurto", "Motivo"],
-  ["receitaCD", "Fica p/ Carpediem", "r"], ["custoRota", "Custo da rota", "r"], ["estrutura", "Estrutura", "r"], ["lucro", "Lucro/mês", "r"], ["margem", "Margem", "r"], ["ch_mes", "Chamados/mês", "r"],
+  ["receitaCD", "Fica p/ Carpediem", "r"], ["cVar", "Custos que somem se sair", "r"], ["contribVar", "Contribuição", "r"], ["horas", "Horas de equipe/mês", "r"],
+  ["porHora", "R$ por hora", "r"], ["custoHora", "Hora custa na rota", "r"], ["resultadoOp", "Depois da equipe", "r"], ["lucro", "Lucro custo cheio", "r"],
 ];
 function renderKpis() {
   const by = (c) => OP.filter((u) => u.classe === c);
-  const rem = by("remover"), ab = by("abaixo"), at = by("atencao"), mat = by("maturando");
-  const ends = [...END.values()];
-  const eSair = ends.filter((e) => e.classe === "sair"), eRever = ends.filter((e) => e.classe === "rever");
+  const rem = by("remover"), lib = by("abaixo"), at = by("atencao"), mat = by("maturando");
   const rec = sum(U, (u) => u.receitaCD), luc = sum(U, (u) => u.lucro);
+  const cand = rem.concat(lib);
+  const hLib = sum(cand, (u) => u.horas);
+  const custoHoraMedio = sum(cand, (u) => u.horas * u.custoHora) / (hLib || 1);
+  const imediato = -sum(cand, (u) => u.contribVar);
+  const comEquipe = imediato + hLib * custoHoraMedio;
+  const rotasNeg = [...ROT.values()].filter((R) => R.resultadoOp < 0 && R.us.length);
   $("#kpis").innerHTML = `
-    <div class="kpi"><span class="k">Resultado da operação</span><span class="v">${brl.format(luc)}</span><span class="s">por mês: ${brl.format(rec)} ficam para a Carpediem − ${brl.format(sum(U, (u) => u.custoRota))} de rotas (operação, limpeza e lavanderia) − ${brl.format(sum(U, (u) => u.impostos))} de impostos − ${brl.format(D.estruturaTotal)} de estrutura. Margem ${pct(luc / rec)}. Período ${periodoTxt()}</span></div>
-    <div class="kpi bad"><span class="k">Remover</span><span class="v">${rem.length}</span><span class="s">Dão prejuízo com custos rateados: ${brl.format(sum(rem, (u) => u.lucro))}/mês somados</span></div>
-    <div class="kpi warn"><span class="k">Abaixo da meta (${params.meta}%)</span><span class="v">${ab.length}</span><span class="s">Lucram, mas pouco: ${brl.format(sum(ab, (u) => u.lucro))}/mês somados</span></div>
-    <div class="kpi bad"><span class="k">Endereços</span><span class="v">${eSair.length} / ${eRever.length}</span><span class="s">${eSair.length} dão prejuízo no todo · ${eRever.length} abaixo da meta, de ${ends.length} endereços</span></div>
-    <div class="kpi new"><span class="k">Maturando</span><span class="v">${mat.length}</span><span class="s">${mat.filter((u) => u.locRuim).length} hoje dariam prejuízo</span></div>
-    <div class="kpi"><span class="k">Podem trocar de rota</span><span class="v">${OP.filter((u) => u.trocaRota).length}</span><span class="s">Mais perto de outra rota do que da própria · ${at.length} em Atenção por chamados</span></div>`;
+    <div class="kpi"><span class="k">Resultado da operação (custo cheio)</span><span class="v">${brl.format(luc)}</span><span class="s">por mês: ${brl.format(rec)} ficam para a Carpediem − rotas, impostos e ${brl.format(D.estruturaTotal)} de estrutura. Período ${periodoTxt()}</span></div>
+    <div class="kpi bad"><span class="k">Tirar</span><span class="v">${rem.length}</span><span class="s">Tiram dinheiro só nos custos variáveis. Sair melhora ${brl.format(-sum(rem, (u) => u.contribVar))}/mês já</span></div>
+    <div class="kpi warn"><span class="k">Libera equipe</span><span class="v">${lib.length}</span><span class="s">Não pagam as horas de equipe que usam: ${n1.format(sum(lib, (u) => u.horas))} h/mês (${n1.format(sum(lib, (u) => u.horas) / 220)} pessoas)</span></div>
+    <div class="kpi"><span class="k">Se tirar os dois grupos</span><span class="v">${brl.format(comEquipe)}</span><span class="s">por mês, se as ${n1.format(hLib)} h liberadas (${n1.format(hLib / 220)} pessoas) forem reduzidas ou usadas em imóveis novos. Sem mexer na equipe: ${brl.format(imediato)}/mês. Estrutura não muda</span></div>
+    <div class="kpi bad"><span class="k">Rotas que não pagam a própria equipe</span><span class="v">${rotasNeg.length}</span><span class="s">${rotasNeg.map((R) => `${esc(R.rota.replace("Rota ", ""))} (${brl.format(R.resultadoOp)})`).join(" · ") || "nenhuma"}</span></div>
+    <div class="kpi new"><span class="k">Maturando</span><span class="v">${mat.length}</span><span class="s">${mat.filter((u) => u.locRuim).length} hoje tiram dinheiro nos variáveis · ${OP.filter((u) => u.trocaRota).length} podem trocar de rota · ${at.length} em Atenção</span></div>`;
 }
 function renderTable() {
   const rota = $("#fRota").value, classe = $("#fClasse").value, q = $("#fBusca").value.trim().toLowerCase(), outra = $("#fOutra").checked, ec = $("#fEnd").value;
@@ -291,7 +312,7 @@ function renderTable() {
   const ord = { sair: 0, rever: 1, novo: 2, manter: 3 };
   rows.sort((a, b) => {
     let x = a[sortKey], y = b[sortKey];
-    if (sortKey === "classe") { const d = CLASSE[x].ordem - CLASSE[y].ordem; return (sortAsc ? 1 : -1) * (d || a.lucro - b.lucro); }
+    if (sortKey === "classe") { const d = CLASSE[x].ordem - CLASSE[y].ordem; return (sortAsc ? 1 : -1) * (d || a.resultadoOp - b.resultadoOp); }
     if (sortKey === "endClasse") { const d = ord[x] - ord[y]; return (sortAsc ? 1 : -1) * (d || a.endResultado - b.endResultado); }
     if (typeof x === "string" || typeof y === "string") return (sortAsc ? 1 : -1) * String(x ?? "").localeCompare(String(y ?? ""), "pt-BR");
     return (sortAsc ? 1 : -1) * ((x ?? -1e12) - (y ?? -1e12));
@@ -302,8 +323,10 @@ function renderTable() {
     <td class="nome"><b>${esc(u.publico || u.nome)}</b><span>${esc(u.nome)}</span></td>
     <td class="nome"><b>${esc(u.endNome)}</b><span>${u.na_parada > 1 ? u.na_parada + " imóveis no endereço" : "imóvel único"}</span></td>
     <td>${esc(u.rota)}</td><td>${pill(u.classe)}</td><td>${u.na_parada > 1 ? pillEnd(u.endClasse) : '<span class="muted small">—</span>'}</td><td class="motivo">${esc(u.motivoCurto)}</td>
-    <td class="r">${brl.format(u.receitaCD)}</td><td class="r">${brl.format(u.custoRota)}</td><td class="r">${brl.format(u.estrutura)}</td>
-    <td class="r ${u.lucro < 0 ? "neg" : ""}">${brl.format(u.lucro)}</td><td class="r ${u.margem < 0 ? "neg" : ""}">${pct(u.margem)}</td><td class="r">${n2.format(u.ch_mes)}</td></tr>`).join("");
+    <td class="r">${brl.format(u.receitaCD)}</td><td class="r">${brl.format(u.cVar)}</td>
+    <td class="r ${u.contribVar < 0 ? "neg" : ""}">${brl.format(u.contribVar)}</td><td class="r">${n1.format(u.horas)}</td>
+    <td class="r ${u.porHora != null && u.porHora < u.custoHora ? "neg" : ""}">${u.porHora != null ? brl.format(u.porHora) : "—"}</td><td class="r">${brl.format(u.custoHora)}</td>
+    <td class="r ${u.resultadoOp < 0 ? "neg" : ""}">${brl.format(u.resultadoOp)}</td><td class="r ${u.lucro < 0 ? "neg" : ""}">${brl.format(u.lucro)}</td></tr>`).join("");
   $("#tbl").innerHTML = head + "<tbody>" + body + "</tbody>";
 }
 
@@ -333,7 +356,20 @@ function openUnit(id) {
     <p>${u.op ? pill(u.classe) : ""} ${e && e.n > 1 ? pillEnd(e.classe) : ""}</p>
     <p class="small"><b>${esc(u.endNome || stopName([u]))}</b> · ${esc(u.endereco || "")}</p>
     ${why}
-    <h3>A conta do imóvel (média por mês, ${periodoTxt()}${u.mesesP < USADOS.length ? `, ${u.mesesP} meses ativos` : ""})</h3>
+    ${u.op ? `<h3>Se ele sair (média por mês)</h3>
+    <table class="calc">
+      <tr><td>Deixa de entrar<span class="sub">taxa de administração + taxa de limpeza</span></td><td>−${brl.format(u.receitaCD)}</td></tr>
+      <tr><td>Impostos que somem</td><td>+${brl.format(u.impostos)}</td></tr>
+      <tr><td>Lavanderia, material e limpeza terceirizada que somem<span class="sub">${n2.format(u.resP)} limpezas/mês</span></td><td>+${brl.format(u.cLimpTerc)}</td></tr>
+      <tr><td>Combustível que some<span class="sub">${n1.format(u.viagensU || 0)} idas/mês do ponto operacional</span></td><td>+${brl.format(u.cDescComb || 0)}</td></tr>
+      <tr><td>Manutenção não reembolsada que some<span class="sub">${n2.format(u.ch_mes)} chamados/mês</span></td><td>${u.cImoveis < 0 ? "−" + brl.format(-u.cImoveis) : "+" + brl.format(u.cImoveis)}</td></tr>
+      <tr class="tot"><td>Efeito imediato no resultado</td><td class="${-u.contribVar < 0 ? "neg" : ""}">${-u.contribVar >= 0 ? "+" : "−"}${brl.format(Math.abs(u.contribVar))}</td></tr>
+      <tr><td>Horas de equipe liberadas<span class="sub">${n2.format(u.resP)} limpezas × ${n2.format(u.hLimp)} h + ${n2.format(u.ch_mes)} chamados × ${n2.format(params.hCh)} h + deslocamento</span></td><td>${n1.format(u.horas)} h</td></tr>
+      <tr><td>Valor dessas horas na rota<span class="sub">${n1.format(u.horas)} h × ${brl.format(u.custoHora)}/h (equipe fixa da rota ÷ horas que a rota gera)</span></td><td>+${brl.format(u.horas * u.custoHora)}</td></tr>
+      <tr class="tot"><td>Efeito se as horas forem reduzidas ou usadas em outro imóvel</td><td class="${-u.resultadoOp < 0 ? "neg" : ""}">${-u.resultadoOp >= 0 ? "+" : "−"}${brl.format(Math.abs(u.resultadoOp))}</td></tr>
+    </table>
+    <p class="small muted">A estrutura (${brl.format(u.estrutura)}) não some se ele sair: ela passa a ser dividida pelos outros imóveis.</p>` : ""}
+    <h3>Custo cheio, com tudo rateado (média por mês, ${periodoTxt()}${u.mesesP < USADOS.length ? `, ${u.mesesP} meses ativos` : ""})</h3>
     <table class="calc">
       <tr><td>Receita bruta<span class="sub">total pago pelos hóspedes</span></td><td>${brl.format(u.brutaP)}</td></tr>
       <tr><td>Taxa de administração<span class="sub">${pct(u.taxa)} sobre o líquido da reserva (total − comissão do portal − taxa de limpeza)</span></td><td>${brl.format(u.admP)}</td></tr>
@@ -356,7 +392,7 @@ function openUnit(id) {
       <tr class="tot"><td>Lucro do imóvel</td><td class="${u.lucro < 0 ? "neg" : ""}">${brl.format(u.lucro)} · ${pct(u.margem)}</td></tr>
       ${e && e.n > 1 ? `<tr class="tot"><td>Endereço inteiro (${e.n} imóveis)</td><td class="${e.resultado < 0 ? "neg" : ""}">${brl.format(e.resultado)} · ${pct(e.margem)}</td></tr>` : ""}
     </table>
-    ${u.op ? `<p class="small muted">Se sair só este imóvel: deixam de entrar ${brl.format(u.receitaCD)}/mês e deixam de sair cerca de ${brl.format(evitavel)}/mês da rota${e && e.n > 1 ? " (o km até o endereço continua, porque os outros imóveis ficam)" : ""}. A parte da estrutura (${brl.format(u.estrutura)}) só vira economia se for cortada ou ocupada por um imóvel novo.</p>` : ""}
+
     <h3>Receita mês a mês</h3>
     <svg class="bars" viewBox="0 0 ${W} ${H}" role="img" aria-label="Receita mensal">${bars}</svg>
     <p class="small muted"><span style="color:#8fb3ae">■</span> bruta &nbsp; <span style="color:#0E6B6B">■</span> fica para a Carpediem</p>
@@ -670,14 +706,16 @@ async function drawRoadGeometry(pts) {
 /* ---------------- aba Rotas ---------------- */
 function renderRotas() {
   if ($("#tab-rotas").hidden) return;
-  const rows = [...ROT.values()].map((R) => {
+  const rows = [...ROT.values()].filter((R) => R.us.length).map((R) => {
     const us = R.us;
-    const rec = sum(us, (u) => u.receitaCD), est = sum(us, (u) => u.estrutura), luc = sum(us, (u) => u.lucro);
-    return { R, n: us.length, rec, dir: R.d.total + (R.Lp ? R.Lp.equipe + R.Lp.terceirizada : 0), est, luc, mg: rec > 0 ? luc / rec : -Infinity, rem: us.filter((u) => u.classe === "remover").length, ab: us.filter((u) => u.classe === "abaixo").length };
-  }).sort((a, b) => a.mg - b.mg);
-  $("#rtbl").innerHTML = `<thead><tr><th>Rota</th><th class="r">Imóveis</th><th class="r">Fica p/ Carpediem</th><th class="r">Custo direto (operação + limpeza)</th><th class="r">Custo por visita</th><th class="r">Estrutura rateada</th><th class="r">Lucro/mês</th><th class="r">Margem</th><th class="r">Remover</th><th class="r">Abaixo da meta</th></tr></thead><tbody>` +
-    rows.map((r) => `<tr data-r="${esc(r.R.rota)}"><td class="nome"><b>${esc(r.R.rota)}</b><span>${esc(r.R.d.nome_dre)}</span></td><td class="r">${r.n}</td><td class="r">${brl.format(r.rec)}</td><td class="r">${brl.format(r.dir)}</td><td class="r">${brl.format(r.R.custoVisita)}</td><td class="r">${brl.format(r.est)}</td>
-      <td class="r ${r.luc < 0 ? "neg" : ""}">${brl.format(r.luc)}</td><td class="r ${r.mg < params.meta / 100 ? "neg" : ""}">${pct(r.mg)}</td><td class="r">${r.rem}</td><td class="r">${r.ab}</td></tr>`).join("") + "</tbody>";
+    return { R, n: us.length, rec: sum(us, (u) => u.receitaCD), est: sum(us, (u) => u.estrutura), luc: sum(us, (u) => u.lucro),
+      rem: us.filter((u) => u.classe === "remover").length, lib: us.filter((u) => u.classe === "abaixo").length };
+  }).sort((a, b) => a.R.resultadoOp - b.R.resultadoOp);
+  $("#rtbl").innerHTML = `<thead><tr><th>Rota</th><th class="r">Imóveis</th><th class="r">Fica p/ Carpediem</th><th class="r">Contribuição (depois dos variáveis)</th><th class="r">Equipe fixa da rota</th><th class="r">Resultado antes da estrutura</th><th class="r">Hora de equipe custa</th><th class="r">Horas/mês</th><th class="r">Estrutura rateada</th><th class="r">Lucro custo cheio</th><th class="r">Tirar</th><th class="r">Libera equipe</th></tr></thead><tbody>` +
+    rows.map((r) => `<tr data-r="${esc(r.R.rota)}"><td class="nome"><b>${esc(r.R.rota)}</b><span>${esc(r.R.d?.nome_dre || "")}</span></td><td class="r">${r.n}</td><td class="r">${brl.format(r.rec)}</td>
+      <td class="r ${r.R.contrib < 0 ? "neg" : ""}">${brl.format(r.R.contrib)}</td><td class="r">${brl.format(r.R.fixos)}</td><td class="r ${r.R.resultadoOp < 0 ? "neg" : ""}">${brl.format(r.R.resultadoOp)}</td>
+      <td class="r">${brl.format(r.R.custoHora)}</td><td class="r">${n1.format(r.R.horas)}</td><td class="r">${brl.format(r.est)}</td><td class="r ${r.luc < 0 ? "neg" : ""}">${brl.format(r.luc)}</td>
+      <td class="r">${r.rem}</td><td class="r">${r.lib}</td></tr>`).join("") + "</tbody>";
   $$("#rtbl tbody tr").forEach((tr) => tr.addEventListener("click", () => { $("#fRota").value = tr.dataset.r; document.querySelector('.tab[data-tab="decisao"]').click(); }));
 }
 
@@ -689,11 +727,10 @@ function renderPredios() {
   const ord = { sair: 0, rever: 1, novo: 2, manter: 3 };
   const rows = [...END.values()].filter((e) => (!rota || e.rota === rota) && e.n >= min).sort((a, b) => ord[a.classe] - ord[b.classe] || a.margem - b.margem);
   const cnt = (e, c) => e.us.filter((u) => u.classe === c).length;
-  $("#ptbl").innerHTML = `<thead><tr><th>Empreendimento / endereço</th><th>Rota</th><th>Decisão do endereço</th><th class="r">Imóveis</th><th class="r">No lucro</th><th class="r">Fica p/ Carpediem</th><th class="r">Custo da rota</th><th class="r">Estrutura</th><th class="r">Resultado</th><th class="r">Margem</th><th>Quem sustenta</th><th class="r">Remover</th><th class="r">Abaixo</th></tr></thead><tbody>` +
-    rows.map((e, i) => `<tr data-p="${i}"><td class="nome"><b>${esc(e.nome)}</b><span>${esc(e.us[0].endereco || "")}</span></td><td>${esc(e.rota)}</td><td>${pillEnd(e.classe)}</td><td class="r">${e.n}</td><td class="r">${e.positivos.length}</td>
-      <td class="r">${brl.format(e.receita)}</td><td class="r">${brl.format(e.custoRota)}</td><td class="r">${brl.format(e.estrutura)}</td>
-      <td class="r ${e.resultado < 0 ? "neg" : ""}">${brl.format(e.resultado)}</td><td class="r ${e.margem < params.meta / 100 ? "neg" : ""}">${pct(e.margem)}</td>
-      <td class="motivo">${e.n > 1 && e.semTop != null && e.semTop < 0 && e.resultado >= 0 ? `Só ${esc(e.top.publico || e.top.nome)}` : e.n > 1 ? `${e.positivos.length} imóveis no lucro` : "—"}</td>
+  $("#ptbl").innerHTML = `<thead><tr><th>Empreendimento / endereço</th><th>Rota</th><th>Decisão do endereço</th><th class="r">Imóveis</th><th class="r">Fica p/ Carpediem</th><th class="r">Contribuição</th><th class="r">Horas de equipe/mês</th><th class="r">Depois da equipe</th><th class="r">Lucro custo cheio</th><th class="r">Tirar</th><th class="r">Libera equipe</th></tr></thead><tbody>` +
+    rows.map((e, i) => `<tr data-p="${i}"><td class="nome"><b>${esc(e.nome)}</b><span>${esc(e.us[0].endereco || "")}</span></td><td>${esc(e.rota)}</td><td>${pillEnd(e.classe)}</td><td class="r">${e.n}</td>
+      <td class="r">${brl.format(e.receita)}</td><td class="r ${e.contribVar < 0 ? "neg" : ""}">${brl.format(e.contribVar)}</td><td class="r">${n1.format(e.horasEq)}</td>
+      <td class="r ${e.resultado < 0 ? "neg" : ""}">${brl.format(e.resultado)}</td><td class="r ${e.lucroCheio < 0 ? "neg" : ""}">${brl.format(e.lucroCheio)}</td>
       <td class="r">${cnt(e, "remover") ? `<span class="neg">${cnt(e, "remover")}</span>` : 0}</td><td class="r">${cnt(e, "abaixo")}</td></tr>`).join("") + "</tbody>";
   $$("#ptbl tbody tr").forEach((tr) => tr.addEventListener("click", () => openStop(rows[+tr.dataset.p])));
 }
@@ -778,13 +815,20 @@ function renderMetodo() {
     linha("Custo por pessoa da equipe de campo", `${brl.format(salario())}/mês (folha + ajuda + premiação + encargos) ÷ 220 h`),
     linha("Gasolina", Object.entries(P.combustivel || {}).map(([k, v]) => `${k === "_BR" ? "outros" : k} ${brl2.format(v)}`).join(" · ")),
   ])}
-  ${bloco("6. Decisão", [
-    linha(pill("remover"), "lucro &lt; 0"),
-    linha(pill("abaixo"), `margem entre 0 e ${params.meta}%`),
+  ${bloco("6. Decisão (visão marginal)", [
+    linha("Custos que somem se o imóvel sair", "impostos + lavanderia/material/limpeza terceirizada + combustível + manutenção não reembolsada"),
+    linha("Contribuição", "Receita Carpediem − custos que somem se sair"),
+    linha("Horas de equipe/mês", `limpezas × (${n2.format(params.hLimp)} h + ${n2.format(params.hQuarto)} h por quarto extra) + chamados × ${n2.format(params.hCh)} h + tempo de deslocamento`),
+    linha("Hora de equipe na rota", "equipe fixa da rota (pessoal, limpeza, ponto de apoio, veículos, tempo) ÷ horas que os imóveis da rota geram"),
+    linha("Depois da equipe", "Contribuição − horas × custo da hora na rota"),
+    linha(pill("remover"), "contribuição &lt; 0: sair melhora o resultado já, sem mexer em equipe nem estrutura"),
+    linha(pill("abaixo"), "contribuição ≥ 0, mas não paga as horas de equipe que usa: sair libera equipe para imóveis melhores ou evita contratar"),
     linha(pill("atencao"), "chamados no top 10% da base, ou sem reservas no período"),
-    linha(pill("manter"), `margem ≥ ${params.meta}%`),
+    linha(pill("manter"), "paga as próprias horas de equipe e ajuda a pagar a estrutura"),
     linha(pill("maturando"), "menos de 6 meses desde o início; não é indicado para sair"),
     linha(pillEnd("sair") + " " + pillEnd("rever"), "mesma regra, somando todos os imóveis do endereço"),
+    linha("Rota que não paga a própria equipe", "soma das contribuições da rota &lt; equipe fixa da rota: fechar a rota economiza a equipe inteira"),
+    linha("Estrutura", "não muda se imóveis saírem; passa a ser dividida pelos que ficam"),
     linha("Troca de rota", "parada de outra rota a menos da metade da distância da própria"),
   ])}
   ${bloco("7. Fontes", [
