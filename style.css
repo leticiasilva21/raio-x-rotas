@@ -210,3 +210,7 @@ main { padding: 20px max(16px, env(safe-area-inset-left)) 40px; max-width: 1600p
 .mes-chip.est { background: var(--warn-soft); color: #94650a; }
 .dre-msg { font-size: 13px; }
 .dre-msg.err { color: var(--bad); }
+
+#tab-metodo .calc td:first-child { width: 38%; color: var(--ink); padding-right: 16px; vertical-align: top; }
+#tab-metodo .calc td:last-child { text-align: left; font-family: var(--font); white-space: normal; color: var(--ink-2); }
+#tab-metodo h2 { font-size: 17px; margin: 22px 0 6px; }

@@ -717,43 +717,67 @@ function renderSemRota() {
 /* ---------------- aba Como calculamos ---------------- */
 function renderMetodo() {
   const g = D.grupos;
+  const lim = Object.values(D.limpeza || {}).reduce((s, v) => s + v.equipe + v.terceirizada, 0);
+  const ext = g.ext;
+  const linha = (a, b) => `<tr><td>${a}</td><td>${b}</td></tr>`;
+  const bloco = (titulo, linhas) => `<h2>${titulo}</h2><table class="calc">${linhas.join("")}</table>`;
   $("#tab-metodo").innerHTML = `
-  <h2>A conta de cada imóvel</h2>
-  <p><b>Lucro = o que fica para a Carpediem − custo da rota (operação + limpeza e lavanderia) − impostos − estrutura da empresa.</b> Tudo em média por mês no período da DRE: ${periodoTxt()}. Imóvel cadastrado no meio do período usa só os meses em que estava ativo.</p>
-  <ul>
-    <li><b>Fica para a Carpediem:</b> taxa de administração (% de comissão da Mastertable × líquido da reserva, ou seja, total − comissão do portal − taxa de limpeza, como no financeiro da Stays) + taxa de limpeza recolhida, das reservas da Stays.</li>
-    <li><b>Limpeza e lavanderia:</b> da aba "Resultado - Taxa de Limpeza", por rota: custo da equipe de limpeza + operação terceirizada (lavanderia, material de limpeza e lavanderia, limpeza terceirizada). A lavanderia da PB já vem dividida só entre as rotas da PB, e a de Ipojuca só entre as de Ipojuca. Dentro da rota, cada imóvel paga pelas limpezas (reservas) que teve. O ponto de apoio dessa aba não entra de novo: ele já está nas operações externas.</li>
-    <li><b>Impostos sobre vendas:</b> ISS, PGDAS e PIS/COFINS/IRPJ/CSLL do Resumo mensal ÷ receita bruta = ${n1.format(D.aliquota * 100)}% no período, aplicados sobre o que fica para a Carpediem já sem o custo da limpeza (como na receita líquida da DRE).</li>
-    <li><b>Custo direto da rota:</b> o bloco "Operações externas" da DRE de cada rota (pessoal da operação, ponto de apoio, transporte e custo com imóveis), ${brl.format(g.ext)}/mês no total. Pessoal e ponto de apoio são divididos pelas visitas de cada imóvel (limpezas + chamados). O transporte é dividido ${100 - params.pkm}% pelas visitas e ${params.pkm}% pelos km a mais que cada endereço exige da rota. O custo com imóveis é dividido pelos chamados.</li>
-    <li><b>Estrutura:</b> todo o resto dos dispêndios (operações internas ${brl.format(g.int)}, administrativo ${brl.format(g.adm)}, comercial/marketing ${brl.format(g.com)}, financeiro ${brl.format(g.fin)} e pessoas ${brl.format(g.pes)}), ${brl.format(D.estrutura)}/mês. ${params.rateio === "igual" ? "Dividida igualmente entre os imóveis: cada imóvel consome atendimento, sistemas, financeiro e suporte, fature pouco ou muito." : "Dividida proporcionalmente ao que cada imóvel deixa para a Carpediem."}</li>
-  </ul>
-  <h2>Decisão do imóvel</h2>
-  <ol>
-    <li><b>Remover:</b> lucro negativo depois de pagar a parte dele na rota e na estrutura.</li>
-    <li><b>Abaixo da meta:</b> lucra, mas com margem abaixo de ${params.meta}%. A ideia não é ter imóveis que só se pagam: esses recursos renderiam mais num imóvel ou empreendimento novo com margem maior.</li>
-    <li><b>Atenção:</b> está na meta, mas tem chamados entre os 10% mais altos da base.</li>
-    <li><b>Manter:</b> margem na meta ou acima.</li>
-    <li><b>Maturando:</b> menos de 6 meses desde o início do imóvel. O início é a data mais recente entre o cadastro na Stays, a data de ativação da Mastertable e a retomada das reservas depois de 3 meses ou mais sem nenhuma (reativação). Não é apontado para sair; o detalhe mostra o que a regra diria se ele já estivesse maduro.</li>
-  </ol>
-  <h2>Decisão do endereço</h2>
-  <p>Somamos todos os imóveis do mesmo empreendimento ou endereço. <b>Sair do endereço:</b> o endereço inteiro dá prejuízo. <b>Rever endereço:</b> lucra, mas abaixo da meta. <b>Manter endereço:</b> na meta. Um endereço pode ter imóveis bons e mesmo assim não compensar no todo; e um imóvel fraco num endereço forte pode ficar se o endereço como um todo compensa.</p>
-  <p>Tirar um imóvel sozinho de um endereço que continua na rota não economiza o km até lá. O detalhe de cada imóvel mostra quanto de custo realmente some se só ele sair.</p>
-  <h2>Deslocamento a partir do ponto operacional</h2>
-  <p>Cada rota tem um ponto operacional, de onde a equipe sai. Para cada endereço calculamos, por ruas reais, a ida e volta desde esse ponto (km e minutos). Custo de cada ida = combustível (km ÷ ${n1.format(params.cons)} km/l × gasolina do estado) + tempo da equipe (minutos × ${n1.format(params.tr)} de trânsito × custo médio por pessoa da equipe de campo, ${brl.format(salario())}/mês pela DRE (folha + ajuda de custo + premiação + encargos) ÷ 220 h). Visitas no mesmo endereço no mesmo dia contam uma ida só. Para não contar duas vezes, o combustível sai do transporte da rota na DRE e o tempo sai do pessoal da rota; o que sobra continua dividido pelas visitas. A Rota da Cidade do Sol ainda não tem ponto informado e usa o rateio antigo.</p>
-  <h2>Troca de rota</h2>
-  <p>Marcamos quem tem uma parada de outra rota a menos da metade da distância da parada mais próxima da própria rota, e comparamos o custo por visita das duas rotas (custo direto da DRE ÷ visitas da rota).</p>
-  <h2>Km a mais por endereço</h2>
-  <p>Simulamos 400 dias de cada rota: cada endereço entra no dia com a chance real de ter visita, a equipe sai do endereço com mais visitas e fazemos a rota mais curta do dia por ruas reais (vizinho mais próximo, 2-opt e Or-opt). O km a mais de um endereço é quanto aquela rota encurtaria sem ele, na média dos dias em que ele aparece.</p>
-  <h2>Fontes</h2>
-  <ul>
-    <li>DRE por rota${P.dre.arquivo ? ` (arquivo ${esc(P.dre.arquivo)}${P.dre.enviado_por ? `, enviado por ${esc(P.dre.enviado_por)}` : ""}${P.dre.enviado_em ? ` em ${fmtData(P.dre.enviado_em.slice(0, 10))}` : ""})` : ""}: período ${periodoTxt()}, dispêndios de ${brl.format(D.total)}/mês. Um mês conta como fechado quando as rotas têm transporte e ponto de apoio lançados; os meses seguintes, até o mês atual, repetem o último mês fechado. Meses sem reservas baixadas ficam de fora.</li>
-    <li>Imóveis e rotas: Mastertable do Jestor (status Ativo). Proprietário, Terceirizada e imóveis sem rota não têm custo de rota, só estrutura; estão listados na aba Sem rota.</li>
-    <li>Reservas da Stays sem canceladas e sem uso do proprietário. Em prédios (grupos-clone) a receita do grupo é dividida igualmente entre as unidades. Anúncios duplicados viram um imóvel só, somando receita e chamados: os pares da planilha de/para (prédio × individual) e os anúncios ativos ou ocultos com o mesmo condomínio + apê/bloco a menos de 500 m, mesmo com o dono escrito de outro jeito ou em nome da administradora. Em prédios, a receita do grupo é dividida pelo número de unidades distintas (condomínio + apê), não pelo número de anúncios. Anúncios já desativados de um par continuam somando as reservas que tiveram no período. A média mensal usa só os meses desde o início do imóvel.</li>
-    <li>Chamados: manutenções do Jestor de out/2025 a set/2026, por mês.</li>
-  </ul>
+  <p class="small muted">Médias por mês · período ${esc(periodoTxt())} · DRE: ${esc(P.dre.arquivo || "—")}</p>
+  ${bloco("1. Lucro do imóvel", [
+    linha("<b>Lucro</b>", "Receita Carpediem − Rota − Impostos − Estrutura"),
+    linha("<b>Margem</b>", "Lucro ÷ Receita Carpediem"),
+  ])}
+  ${bloco("2. Receita Carpediem (reservas da Stays)", [
+    linha("Taxa de administração", "% da Mastertable × (total da reserva − comissão do portal − taxa de limpeza)"),
+    linha("Taxa de limpeza", "valor cobrado do hóspede, quando o formato é \"Recolhe\""),
+    linha("Fora da conta", "canceladas e uso do proprietário"),
+    linha("Prédios (grupo na Stays)", "receita do grupo ÷ unidades distintas"),
+    linha("Média mensal", "só meses desde o início do imóvel (cadastro, ativação ou reativação)"),
+  ])}
+  ${bloco("3. Custo da rota (DRE, dividido entre os imóveis da rota)", [
+    linha("Deslocamento: combustível", `idas × km ida e volta do ponto operacional ÷ ${n1.format(params.cons)} km/l × gasolina do estado`),
+    linha("Deslocamento: tempo", `idas × minutos ida e volta × ${n1.format(params.tr)} (trânsito) × ${brl2.format(salario() / 220)}/h`),
+    linha("Idas por mês", "dias com limpeza ou chamado no endereço"),
+    linha("Pessoal da operação", "(pessoal da rota − tempo de deslocamento) × fatia de visitas"),
+    linha("Ponto de apoio", "ponto de apoio da rota × fatia de visitas"),
+    linha("Resto do transporte", "(transporte da rota − combustível) × fatia de visitas"),
+    linha("Custo com imóveis", "custo com imóveis da rota × fatia de chamados"),
+    linha("Equipe de limpeza", "equipe de limpeza da rota × fatia de limpezas"),
+    linha("Lavanderia e terceirizados", "lavanderia + material + limpeza terceirizada da rota × fatia de limpezas"),
+    linha("Visita", "1 limpeza (reserva) ou 1 chamado do Jestor"),
+  ])}
+  ${bloco("4. Impostos e estrutura", [
+    linha("Impostos", `${n1.format(D.aliquota * 100)}% × (Receita Carpediem − limpeza da rota)`),
+    linha("Estrutura", `${brl.format(D.estrutura)}/mês ÷ ${U.filter((x) => !x.sem_stays).length} imóveis = ${brl.format(D.estrutura / (U.filter((x) => !x.sem_stays).length || 1))} por imóvel`),
+    linha("O que é estrutura", "operações internas, administrativo, comercial/marketing, financeiro e pessoas (backoffice)"),
+  ])}
+  ${bloco("5. Valores do período", [
+    linha("Operações externas das rotas", `${brl.format(ext)}/mês`),
+    linha("Limpeza e lavanderia das rotas", `${brl.format(lim)}/mês`),
+    linha("Estrutura", `${brl.format(D.estrutura)}/mês`),
+    linha("Alíquota de impostos", `${n1.format(D.aliquota * 100)}% (ISS + PGDAS + PIS/COFINS ÷ receita bruta)`),
+    linha("Custo por pessoa da equipe de campo", `${brl.format(salario())}/mês (folha + ajuda + premiação + encargos) ÷ 220 h`),
+    linha("Gasolina", Object.entries(P.combustivel || {}).map(([k, v]) => `${k === "_BR" ? "outros" : k} ${brl2.format(v)}`).join(" · ")),
+  ])}
+  ${bloco("6. Decisão", [
+    linha(pill("remover"), "lucro &lt; 0"),
+    linha(pill("abaixo"), `margem entre 0 e ${params.meta}%`),
+    linha(pill("atencao"), "chamados no top 10% da base, ou sem reservas no período"),
+    linha(pill("manter"), `margem ≥ ${params.meta}%`),
+    linha(pill("maturando"), "menos de 6 meses desde o início; não é indicado para sair"),
+    linha(pillEnd("sair") + " " + pillEnd("rever"), "mesma regra, somando todos os imóveis do endereço"),
+    linha("Troca de rota", "parada de outra rota a menos da metade da distância da própria"),
+  ])}
+  ${bloco("7. Fontes", [
+    linha("Imóveis e rotas", "Mastertable do Jestor, status Ativo"),
+    linha("Reservas", "Stays"),
+    linha("Chamados", `Jestor (manutenções); ${P.chamados_sem_vinculo} sem imóvel ativo ficam fora`),
+    linha("Custos", "DRE: abas Despesas, Resultado - Taxa de Limpeza e Resumo mensal"),
+    linha("Duplicados", "de/para prédio × individual + mesmo condomínio e apê a menos de 500 m"),
+    linha("Meses sem DRE fechada", "repetem o último mês fechado"),
+  ])}
   <p class="small muted">Snapshot gerado em ${fmtData(P.gerado)}.</p>`;
 }
-
 
 /* ---------------- atualizar DRE ---------------- */
 let dreNova = null;
