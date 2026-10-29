@@ -94,7 +94,25 @@ function lerDespesas(rows) {
     const extra = ["AJUDA DE CUSTO", "PREMIAÇÃO"].reduce((s, k) => s + (porSecao[k]?.[j].total || 0), 0);
     return (f.total * (1 + enc) + extra) / f.n;
   }) : null;
-  return { meses: cols.map((c) => c.mes), rotas, grupos, total, campo };
+  // equipe de campo por rota e mês (só a contagem): pessoas com folha > 0 nas subseções "Agente de Vistoria" e "Limpeza" de cada rota
+  const equipe = {};
+  const fs = rows.findIndex((r) => lab(r) === "FOLHA SALARIAL");
+  const fa = rows.findIndex((r, i) => i > fs && lab(r) === "AJUDA DE CUSTO");
+  const opi = rows.findIndex((r, i) => i > fs && i < fa && lab(r).startsWith("OPERAÇÃO"));
+  if (opi > 0) {
+    let cur = null, sub = null;
+    for (const r of rows.slice(opi + 1, fa)) {
+      const l = lab(r);
+      if (/\bRota\b/.test(l) && / - /.test(l.slice(0, 9))) { cur = normRota(l); sub = null; equipe[cur] = { vistoria: cols.map(() => 0), limpeza: cols.map(() => 0) }; continue; }
+      if (/Lavanderia/i.test(l) && /rateio/i.test(l)) { cur = null; continue; }
+      if (!cur) continue;
+      if (/^(OP|Op)\.?\s*Agente/i.test(l)) { sub = "vistoria"; continue; }
+      if (/^(OP|Op)\.?\s*-?\s*Limpeza$/i.test(l)) { sub = "limpeza"; continue; }
+      if (!sub || l === "RATEIO" || !l || /Novato/i.test(l)) continue;
+      cols.forEach((c, j) => { if (valor(r[c.i]) > 0) equipe[cur][sub][j] += 1; });
+    }
+  }
+  return { meses: cols.map((c) => c.mes), rotas, grupos, total, campo, equipe };
 }
 
 /** Aba "Resultado - Taxa de Limpeza": faturamento, equipe de limpeza e terceirizados (lavanderia, material, limpeza) por rota. */
@@ -145,7 +163,7 @@ function lerImpostos(rows) {
 export function parseDre(entrada, arquivo) {
   const abas = typeof entrada === "string" ? { [ABA_DESPESAS]: csvLinhas(entrada) } : entrada.abas;
   if (!abas[ABA_DESPESAS]) throw new Error(`A planilha não tem a aba "${ABA_DESPESAS}".`);
-  const { meses, rotas, grupos, total, campo } = lerDespesas(abas[ABA_DESPESAS]);
+  const { meses, rotas, grupos, total, campo, equipe } = lerDespesas(abas[ABA_DESPESAS]);
   const limpeza = abas[ABA_LIMPEZA] ? lerLimpeza(abas[ABA_LIMPEZA], meses) : null;
   const impostos = abas[ABA_RESUMO] ? lerImpostos(abas[ABA_RESUMO]) : null;
   const somaRotas = meses.map((_, j) => Object.values(rotas).reduce((s, v) => s + (v.total[j] || 0), 0));
@@ -163,7 +181,7 @@ export function parseDre(entrada, arquivo) {
   if (!real.some(Boolean)) throw new Error("Nenhum mês tem custos de rota lançados (transporte e ponto de apoio).");
   if (!limpeza) avisos.push(`Sem a aba "${ABA_LIMPEZA}": os custos de equipe de limpeza e terceirizados (lavanderia, material, limpeza) ficam de fora. Envie a planilha .xlsx completa.`);
   if (!impostos) avisos.push(`Sem a aba "${ABA_RESUMO}": os impostos sobre vendas ficam de fora.`);
-  return { arquivo: arquivo || null, meses, real, rotas, grupos, total: tot, limpeza, impostos, custo_pessoa_campo: campo, avisos };
+  return { arquivo: arquivo || null, meses, real, rotas, grupos, total: tot, limpeza, impostos, custo_pessoa_campo: campo, equipe, avisos };
 }
 
 /** Converte um workbook do SheetJS no formato que parseDre espera (só as abas usadas). */
@@ -208,5 +226,7 @@ export function mediasDre(dre, usados) {
   const cp = (dre.custo_pessoa_campo || []);
   const cpUsados = usados.map((u) => cp[u.col]).filter((v) => v > 0);
   const salarioCampo = cpUsados.length ? cpUsados.reduce((s, v) => s + v, 0) / cpUsados.length : null;
-  return { rotas, limpeza, grupos, estrutura, total: avg(dre.total), aliquota, salarioCampo };
+  const equipe = {};
+  for (const [k, v] of Object.entries(dre.equipe || {})) equipe[k] = { limpeza: avg(v.limpeza), vistoria: avg(v.vistoria) };
+  return { rotas, limpeza, grupos, estrutura, total: avg(dre.total), aliquota, salarioCampo, equipe };
 }
