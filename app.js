@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { parseDre, abasDoXlsx, mesesUsados, mediasDre, normRota } from "./dre.js?v=2";
+import { parseDre, abasDoXlsx, mesesUsados, mediasDre, normRota } from "./dre.js?v=3";
 
 const SUPABASE_URL = "https://ucavfotyciwnqwurzjny.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjYXZmb3R5Y2l3bnF3dXJ6am55Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc5NzUzNjYsImV4cCI6MjA3MzU1MTM2Nn0.nE_W8wZZvJfzlvhP83ge1J0ooS3EcFVSlQYK28eTGU0";
@@ -41,19 +41,20 @@ let END = new Map();   // endereço (parada) -> resumo
 let ROT = new Map();   // rota -> resumo
 let D = null;          // médias da DRE no período usado
 let USADOS = [];       // meses do período: {mes, col, estimado}
-const params = { meta: 10, rateio: "igual", pkm: 50, sal: 2500, cons: 10, tr: 1.3 };
+const params = { meta: 10, rateio: "igual", pkm: 50, sal: null, cons: 10, tr: 1.3 };
+const salario = () => params.sal || D?.salarioCampo || 2500;
 const precoGas = (uf) => (P.combustivel || {})[uf] ?? (P.combustivel || {})._BR ?? 6.6;
 
 /* ---------------- parâmetros ---------------- */
 function loadParams() {
-  try { Object.assign(params, JSON.parse(localStorage.getItem("raiox-params-v8") || "{}")); } catch (e) {}
-  const save = () => { try { localStorage.setItem("raiox-params-v8", JSON.stringify(params)); } catch (e) {} };
+  try { Object.assign(params, JSON.parse(localStorage.getItem("raiox-params-v9") || "{}")); } catch (e) {}
+  const save = () => { try { localStorage.setItem("raiox-params-v9", JSON.stringify(params)); } catch (e) {} };
   const bind = (id, k, num) => {
     const el = document.getElementById(id);
     el.value = params[k];
     el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => { params[k] = num ? parseFloat(el.value) || 0 : el.value; save(); recompute(); });
   };
-  bind("pMeta", "meta", true); bind("pRateio", "rateio", false); bind("pKm", "pkm", true); bind("pSal", "sal", true); bind("pCons", "cons", true); bind("pTr", "tr", true);
+  bind("pMeta", "meta", true); bind("pRateio", "rateio", false); bind("pKm", "pkm", true); { const el = $("#pSal"); el.value = params.sal ?? ""; el.addEventListener("input", () => { params.sal = parseFloat(el.value) || null; try { localStorage.setItem("raiox-params-v9", JSON.stringify(params)); } catch (e) {} recompute(); }); } bind("pCons", "cons", true); bind("pTr", "tr", true);
 }
 // dias com ao menos uma visita no mês: visitas no mesmo dia viram uma viagem só
 const viagens = (visitas) => 30 * (1 - Math.exp(-visitas / 30));
@@ -122,7 +123,7 @@ function recompute() {
       if (!ponto || !e || u.ida_km == null || !e.visitas) continue;
       u.viagensU = e.viagens * (u.visitas / e.visitas);
       u.cDescComb = u.viagensU * (u.ida_km / Math.max(1, params.cons)) * precoGas(u.uf);
-      u.cDescTempo = u.viagensU * (u.ida_min * params.tr / 60) * (params.sal / 220);
+      u.cDescTempo = u.viagensU * (u.ida_min * params.tr / 60) * (salario() / 220);
       F += u.cDescComb; Tm += u.cDescTempo;
     }
     const transpResto = ponto ? Math.max(0, d.transporte - F) : d.transporte;
@@ -324,7 +325,7 @@ function openUnit(id) {
       <tr><td>Ponto de apoio da rota<span class="sub">pelas visitas</span></td><td>−${brl.format(u.cApoio)}</td></tr>
       ${R && R.ponto ? `
       <tr><td>Deslocamento: combustível<span class="sub">${n1.format(u.viagensU)} idas/mês × ${n1.format(u.ida_km)} km ida e volta do ponto operacional ÷ ${n1.format(params.cons)} km/l × ${brl2.format(precoGas(u.uf))}/l</span></td><td>−${brl.format(u.cDescComb)}</td></tr>
-      <tr><td>Deslocamento: tempo da equipe<span class="sub">${n1.format(u.viagensU)} idas/mês × ${n1.format(u.ida_min * params.tr)} min ida e volta (com trânsito) × ${brl2.format(params.sal / 220)}/h (salário ${brl.format(params.sal)} ÷ 220 h)</span></td><td>−${brl.format(u.cDescTempo)}</td></tr>
+      <tr><td>Deslocamento: tempo da equipe<span class="sub">${n1.format(u.viagensU)} idas/mês × ${n1.format(u.ida_min * params.tr)} min ida e volta (com trânsito) × ${brl2.format(salario() / 220)}/h (custo médio por pessoa da equipe de campo, ${brl.format(salario())} ÷ 220 h)</span></td><td>−${brl.format(u.cDescTempo)}</td></tr>
       <tr><td>Resto do transporte da rota<span class="sub">veículos, combustível e outros da DRE que sobram depois do deslocamento acima, pelas visitas</span></td><td>−${brl.format(u.cTranspVis)}</td></tr>` : `
       <tr><td>Transporte da rota, parte pelas visitas<span class="sub">${100 - params.pkm}% do transporte da rota</span></td><td>−${brl.format(u.cTranspVis)}</td></tr>
       <tr><td>Transporte da rota, parte pelos km<span class="sub">${params.pkm}% do transporte, pelo km a mais que o endereço exige (${n1.format(u.kmU)} km/mês dele)</span></td><td>−${brl.format(u.cTranspKm)}</td></tr>`}
@@ -738,7 +739,7 @@ function renderMetodo() {
   <p>Somamos todos os imóveis do mesmo empreendimento ou endereço. <b>Sair do endereço:</b> o endereço inteiro dá prejuízo. <b>Rever endereço:</b> lucra, mas abaixo da meta. <b>Manter endereço:</b> na meta. Um endereço pode ter imóveis bons e mesmo assim não compensar no todo; e um imóvel fraco num endereço forte pode ficar se o endereço como um todo compensa.</p>
   <p>Tirar um imóvel sozinho de um endereço que continua na rota não economiza o km até lá. O detalhe de cada imóvel mostra quanto de custo realmente some se só ele sair.</p>
   <h2>Deslocamento a partir do ponto operacional</h2>
-  <p>Cada rota tem um ponto operacional, de onde a equipe sai. Para cada endereço calculamos, por ruas reais, a ida e volta desde esse ponto (km e minutos). Custo de cada ida = combustível (km ÷ ${n1.format(params.cons)} km/l × gasolina do estado) + tempo da equipe (minutos × ${n1.format(params.tr)} de trânsito × salário de ${brl.format(params.sal)} ÷ 220 h). Visitas no mesmo endereço no mesmo dia contam uma ida só. Para não contar duas vezes, o combustível sai do transporte da rota na DRE e o tempo sai do pessoal da rota; o que sobra continua dividido pelas visitas. A Rota da Cidade do Sol ainda não tem ponto informado e usa o rateio antigo.</p>
+  <p>Cada rota tem um ponto operacional, de onde a equipe sai. Para cada endereço calculamos, por ruas reais, a ida e volta desde esse ponto (km e minutos). Custo de cada ida = combustível (km ÷ ${n1.format(params.cons)} km/l × gasolina do estado) + tempo da equipe (minutos × ${n1.format(params.tr)} de trânsito × custo médio por pessoa da equipe de campo, ${brl.format(salario())}/mês pela DRE (folha + ajuda de custo + premiação + encargos) ÷ 220 h). Visitas no mesmo endereço no mesmo dia contam uma ida só. Para não contar duas vezes, o combustível sai do transporte da rota na DRE e o tempo sai do pessoal da rota; o que sobra continua dividido pelas visitas. A Rota da Cidade do Sol ainda não tem ponto informado e usa o rateio antigo.</p>
   <h2>Troca de rota</h2>
   <p>Marcamos quem tem uma parada de outra rota a menos da metade da distância da parada mais próxima da própria rota, e comparamos o custo por visita das duas rotas (custo direto da DRE ÷ visitas da rota).</p>
   <h2>Km a mais por endereço</h2>
@@ -849,6 +850,7 @@ async function start(payload) {
   P = payload; U = P.unidades.map((u) => ({ ...u }));
   $("#loading").hidden = true;
   wire(); loadParams(); recompute();
+  $("#pSal").placeholder = D.salarioCampo ? `DRE: ${brl.format(D.salarioCampo)}` : "2.500";
   if (LOCAL) window.__raiox = { U: () => U, OP: () => OP, END: () => END };
   const h = location.hash.slice(1);
   if (h) document.querySelector(`.tab[data-tab="${h}"]`)?.click();

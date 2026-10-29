@@ -74,7 +74,27 @@ function lerDespesas(rows) {
     for (const [k, p] of GRUPOS) if (l.startsWith(p) && !grupos[k]) grupos[k] = serie(r);
   }
   for (const [k, p] of GRUPOS) if (!grupos[k]) throw new Error(`Não achei a linha ${p} no topo da aba Despesas.`);
-  return { meses: cols.map((c) => c.mes), rotas, grupos, total };
+  // custo médio por pessoa da equipe de campo (linhas "OP - nome" da Operação em folha, ajuda de custo e premiação) + encargos
+  const ehCampo = (l) => /^(OP|Op|0P)\b[\s.\-]*-?\s*[A-ZÁÉÍÓÚ][a-zá-ú]/.test(l) && !/Limpeza|Vistoria|Novato|Lavanderia/.test(l);
+  const secoes = rows.map((r, i) => [i, lab(r)]).filter(([, l]) => ["FOLHA SALARIAL", "AJUDA DE CUSTO", "PREMIAÇÃO"].includes(l));
+  const porSecao = {};
+  secoes.forEach(([i, nome], k) => {
+    const fim = k + 1 < secoes.length ? secoes[k + 1][0] : rows.length;
+    const op = rows.findIndex((r, j) => j >= i && j < fim && lab(r).startsWith("OPERAÇÃO"));
+    if (op < 0) return;
+    const pessoas = rows.slice(op, fim).filter((r) => ehCampo(lab(r)));
+    porSecao[nome] = cols.map((c) => ({ total: pessoas.reduce((s, r) => s + valor(r[c.i]), 0), n: pessoas.filter((r) => valor(r[c.i]) > 0).length }));
+  });
+  const folhaTot = rows.find((r) => lab(r) === "FOLHA SALARIAL");
+  const impDP = rows.find((r) => lab(r).startsWith("(-) Impostos de DP"));
+  const campo = porSecao["FOLHA SALARIAL"] ? cols.map((c, j) => {
+    const f = porSecao["FOLHA SALARIAL"][j];
+    if (!f.n) return null;
+    const enc = folhaTot && impDP && valor(folhaTot[c.i]) > 0 ? valor(impDP[c.i]) / valor(folhaTot[c.i]) : 0;
+    const extra = ["AJUDA DE CUSTO", "PREMIAÇÃO"].reduce((s, k) => s + (porSecao[k]?.[j].total || 0), 0);
+    return (f.total * (1 + enc) + extra) / f.n;
+  }) : null;
+  return { meses: cols.map((c) => c.mes), rotas, grupos, total, campo };
 }
 
 /** Aba "Resultado - Taxa de Limpeza": faturamento, equipe de limpeza e terceirizados (lavanderia, material, limpeza) por rota. */
@@ -125,7 +145,7 @@ function lerImpostos(rows) {
 export function parseDre(entrada, arquivo) {
   const abas = typeof entrada === "string" ? { [ABA_DESPESAS]: csvLinhas(entrada) } : entrada.abas;
   if (!abas[ABA_DESPESAS]) throw new Error(`A planilha não tem a aba "${ABA_DESPESAS}".`);
-  const { meses, rotas, grupos, total } = lerDespesas(abas[ABA_DESPESAS]);
+  const { meses, rotas, grupos, total, campo } = lerDespesas(abas[ABA_DESPESAS]);
   const limpeza = abas[ABA_LIMPEZA] ? lerLimpeza(abas[ABA_LIMPEZA], meses) : null;
   const impostos = abas[ABA_RESUMO] ? lerImpostos(abas[ABA_RESUMO]) : null;
   const somaRotas = meses.map((_, j) => Object.values(rotas).reduce((s, v) => s + (v.total[j] || 0), 0));
@@ -143,7 +163,7 @@ export function parseDre(entrada, arquivo) {
   if (!real.some(Boolean)) throw new Error("Nenhum mês tem custos de rota lançados (transporte e ponto de apoio).");
   if (!limpeza) avisos.push(`Sem a aba "${ABA_LIMPEZA}": os custos de equipe de limpeza e terceirizados (lavanderia, material, limpeza) ficam de fora. Envie a planilha .xlsx completa.`);
   if (!impostos) avisos.push(`Sem a aba "${ABA_RESUMO}": os impostos sobre vendas ficam de fora.`);
-  return { arquivo: arquivo || null, meses, real, rotas, grupos, total: tot, limpeza, impostos, avisos };
+  return { arquivo: arquivo || null, meses, real, rotas, grupos, total: tot, limpeza, impostos, custo_pessoa_campo: campo, avisos };
 }
 
 /** Converte um workbook do SheetJS no formato que parseDre espera (só as abas usadas). */
@@ -185,5 +205,8 @@ export function mediasDre(dre, usados) {
     const rec = cols.reduce((s, i) => s + dre.impostos.receita_bruta[i], 0), imp = cols.reduce((s, i) => s + dre.impostos.impostos[i], 0);
     aliquota = rec > 0 ? imp / rec : 0;
   }
-  return { rotas, limpeza, grupos, estrutura, total: avg(dre.total), aliquota };
+  const cp = (dre.custo_pessoa_campo || []);
+  const cpUsados = usados.map((u) => cp[u.col]).filter((v) => v > 0);
+  const salarioCampo = cpUsados.length ? cpUsados.reduce((s, v) => s + v, 0) / cpUsados.length : null;
+  return { rotas, limpeza, grupos, estrutura, total: avg(dre.total), aliquota, salarioCampo };
 }
