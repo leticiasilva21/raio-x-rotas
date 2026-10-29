@@ -8,6 +8,9 @@ const ROTA_CAMPOS = {
 };
 const GRUPOS = [["ext", "CUSTO | OPERAÇÕES EXTERNAS"], ["int", "CUSTO | OPERAÇÕES INTERNAS"], ["adm", "DESPESAS | ADMINISTRATIVAS"],
   ["com", "DESPESAS | COMERCIAIS"], ["fin", "DESPESAS | FINANCEIRAS"], ["pes", "DESPESAS | PESSOAS"]];
+// linhas que ficam fora da estrutura geral (decisão da Leticia, 29/10/2026)
+const FORA_ESTRUTURA = [["a_definir", /^\(-\)\s*Despesas Pagas A DEFINIR/i], ["enxoval_estoque", /^\(-\)\s*Env\w*vais estoque/i],
+  ["impostos_dp", /^\(-\)\s*Impostos de DP/i], ["ferias", /^\(-\)\s*Férias/i], ["rescisoes", /^\(-\)\s*Rescisões/i]];
 const ABA_DESPESAS = "Despesas", ABA_LIMPEZA = "Resultado - Taxa de Limpeza", ABA_RESUMO = "Resumo mensal";
 
 /** Chave de rota que casa Mastertable ("Rota da Cidade do Sol") e DRE ("RN - Rota Ciade do Sol", "RN - Cidade do Sol"). */
@@ -112,7 +115,9 @@ function lerDespesas(rows) {
       cols.forEach((c, j) => { if (valor(r[c.i]) > 0) equipe[cur][sub][j] += 1; });
     }
   }
-  return { meses: cols.map((c) => c.mes), rotas, grupos, total, campo, equipe };
+  const fora = {};
+  for (const [k, re] of FORA_ESTRUTURA) { const r = rows.find((x) => re.test(lab(x))); if (r) fora[k] = serie(r); }
+  return { meses: cols.map((c) => c.mes), rotas, grupos, total, campo, equipe, fora };
 }
 
 /** Aba "Resultado - Taxa de Limpeza": faturamento, equipe de limpeza e terceirizados (lavanderia, material, limpeza) por rota. */
@@ -163,7 +168,7 @@ function lerImpostos(rows) {
 export function parseDre(entrada, arquivo) {
   const abas = typeof entrada === "string" ? { [ABA_DESPESAS]: csvLinhas(entrada) } : entrada.abas;
   if (!abas[ABA_DESPESAS]) throw new Error(`A planilha não tem a aba "${ABA_DESPESAS}".`);
-  const { meses, rotas, grupos, total, campo, equipe } = lerDespesas(abas[ABA_DESPESAS]);
+  const { meses, rotas, grupos, total, campo, equipe, fora } = lerDespesas(abas[ABA_DESPESAS]);
   const limpeza = abas[ABA_LIMPEZA] ? lerLimpeza(abas[ABA_LIMPEZA], meses) : null;
   const impostos = abas[ABA_RESUMO] ? lerImpostos(abas[ABA_RESUMO]) : null;
   const somaRotas = meses.map((_, j) => Object.values(rotas).reduce((s, v) => s + (v.total[j] || 0), 0));
@@ -181,7 +186,7 @@ export function parseDre(entrada, arquivo) {
   if (!real.some(Boolean)) throw new Error("Nenhum mês tem custos de rota lançados (transporte e ponto de apoio).");
   if (!limpeza) avisos.push(`Sem a aba "${ABA_LIMPEZA}": os custos de equipe de limpeza e terceirizados (lavanderia, material, limpeza) ficam de fora. Envie a planilha .xlsx completa.`);
   if (!impostos) avisos.push(`Sem a aba "${ABA_RESUMO}": os impostos sobre vendas ficam de fora.`);
-  return { arquivo: arquivo || null, meses, real, rotas, grupos, total: tot, limpeza, impostos, custo_pessoa_campo: campo, equipe, avisos };
+  return { arquivo: arquivo || null, meses, real, rotas, grupos, total: tot, limpeza, impostos, custo_pessoa_campo: campo, equipe, fora_estrutura: fora, avisos };
 }
 
 /** Converte um workbook do SheetJS no formato que parseDre espera (só as abas usadas). */
@@ -216,7 +221,9 @@ export function mediasDre(dre, usados) {
   for (const [k, v] of Object.entries(dre.limpeza || {}))
     limpeza[k] = { nome: v.nome, faturamento: avg(v.faturamento), equipe: avg(v.equipe), terceirizada: avg(v.terceirizada) };
   const grupos = Object.fromEntries(Object.entries(dre.grupos).map(([k, v]) => [k, avg(v)]));
-  const estrutura = Object.entries(grupos).filter(([k]) => k !== "ext").reduce((s, [, v]) => s + v, 0);
+  const estruturaBruta = Object.entries(grupos).filter(([k]) => k !== "ext").reduce((s, [, v]) => s + v, 0);
+  const fora = Object.fromEntries(Object.entries(dre.fora_estrutura || {}).map(([k, v]) => [k, avg(v)]));
+  const estrutura = estruturaBruta - Object.values(fora).reduce((s, v) => s + v, 0);
   let aliquota = 0;
   if (dre.impostos) {
     const cols = usados.map((u) => dre.impostos.meses.indexOf(dre.meses[u.col])).filter((i) => i >= 0);
@@ -228,5 +235,5 @@ export function mediasDre(dre, usados) {
   const salarioCampo = cpUsados.length ? cpUsados.reduce((s, v) => s + v, 0) / cpUsados.length : null;
   const equipe = {};
   for (const [k, v] of Object.entries(dre.equipe || {})) equipe[k] = { limpeza: avg(v.limpeza), vistoria: avg(v.vistoria) };
-  return { rotas, limpeza, grupos, estrutura, total: avg(dre.total), aliquota, salarioCampo, equipe };
+  return { rotas, limpeza, grupos, estrutura, estruturaBruta, fora, total: avg(dre.total), aliquota, salarioCampo, equipe };
 }
