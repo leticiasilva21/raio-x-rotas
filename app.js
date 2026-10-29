@@ -302,7 +302,7 @@ function openUnit(id) {
     <h3>A conta do imóvel (média por mês, ${periodoTxt()}${u.mesesP < USADOS.length ? `, ${u.mesesP} meses ativos` : ""})</h3>
     <table class="calc">
       <tr><td>Receita bruta<span class="sub">total pago pelos hóspedes</span></td><td>${brl.format(u.brutaP)}</td></tr>
-      <tr><td>Taxa de administração<span class="sub">${pct(u.taxa)} das diárias</span></td><td>${brl.format(u.admP)}</td></tr>
+      <tr><td>Taxa de administração<span class="sub">${pct(u.taxa)} sobre o líquido da reserva (total − comissão do portal − taxa de limpeza)</span></td><td>${brl.format(u.admP)}</td></tr>
       <tr><td>Taxa de limpeza ${u.recolhe ? "recolhida" : "(repassada ao dono)"}</td><td>${brl.format(u.limpP)}</td></tr>
       <tr class="tot"><td>Fica para a Carpediem</td><td>${brl.format(u.receitaCD)}</td></tr>
       <tr><td>Pessoal da operação da rota<span class="sub">${share} (${n1.format(u.visitas)} visitas/mês: limpezas + chamados)</span></td><td>−${brl.format(u.cPessoal)}</td></tr>
@@ -693,7 +693,7 @@ function renderMetodo() {
   <h2>A conta de cada imóvel</h2>
   <p><b>Lucro = o que fica para a Carpediem − custo da rota (operação + limpeza e lavanderia) − impostos − estrutura da empresa.</b> Tudo em média por mês no período da DRE: ${periodoTxt()}. Imóvel cadastrado no meio do período usa só os meses em que estava ativo.</p>
   <ul>
-    <li><b>Fica para a Carpediem:</b> taxa de administração (% de comissão da Mastertable × diárias) + taxa de limpeza recolhida, das reservas da Stays.</li>
+    <li><b>Fica para a Carpediem:</b> taxa de administração (% de comissão da Mastertable × líquido da reserva, ou seja, total − comissão do portal − taxa de limpeza, como no financeiro da Stays) + taxa de limpeza recolhida, das reservas da Stays.</li>
     <li><b>Limpeza e lavanderia:</b> da aba "Resultado - Taxa de Limpeza", por rota: custo da equipe de limpeza + operação terceirizada (lavanderia, material de limpeza e lavanderia, limpeza terceirizada). A lavanderia da PB já vem dividida só entre as rotas da PB, e a de Ipojuca só entre as de Ipojuca. Dentro da rota, cada imóvel paga pelas limpezas (reservas) que teve. O ponto de apoio dessa aba não entra de novo: ele já está nas operações externas.</li>
     <li><b>Impostos sobre vendas:</b> ISS, PGDAS e PIS/COFINS/IRPJ/CSLL do Resumo mensal ÷ receita bruta = ${n1.format(D.aliquota * 100)}% no período, aplicados sobre o que fica para a Carpediem já sem o custo da limpeza (como na receita líquida da DRE).</li>
     <li><b>Custo direto da rota:</b> o bloco "Operações externas" da DRE de cada rota (pessoal da operação, ponto de apoio, transporte e custo com imóveis), ${brl.format(g.ext)}/mês no total. Pessoal e ponto de apoio são divididos pelas visitas de cada imóvel (limpezas + chamados). O transporte é dividido ${100 - params.pkm}% pelas visitas e ${params.pkm}% pelos km a mais que cada endereço exige da rota. O custo com imóveis é dividido pelos chamados.</li>
