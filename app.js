@@ -74,7 +74,7 @@ function periodoTxt() {
 function recompute() {
   const idx = periodo();
   for (const u of U) {
-    const ini = (u.criado || "2000-01").slice(0, 7);
+    const ini = (u.inicio || u.criado || "2000-01").slice(0, 7);
     const ativos = idx.filter((i) => P.meses[i] >= ini);
     const n = ativos.length || 0;
     const avg = (k) => (n ? sum(ativos, (i) => u.serie[i][k]) / n : 0);
@@ -190,7 +190,7 @@ function classify(u, e, chP90) {
   if (u.novo) {
     const regra = classe;
     classe = "maturando";
-    m.unshift(["maturando", `Cadastrado na Stays em ${fmtData(u.criado)}, ainda em maturação (menos de 6 meses).${regra === "remover" ? " Pelo resultado de hoje estaria em Remover." : regra === "abaixo" ? " Pelo resultado de hoje estaria abaixo da meta." : ""}`]);
+    m.unshift(["maturando", `${u.reativado ? `Reativado em ${fmtData(u.inicio)} (${u.inicio_motivo})` : `Começou em ${fmtData(u.inicio)} (${u.inicio_motivo})`}, ainda em maturação (menos de 6 meses).${regra === "remover" ? " Pelo resultado de hoje estaria em Remover." : regra === "abaixo" ? " Pelo resultado de hoje estaria abaixo da meta." : ""}`]);
     u.regraSeMaduro = regra;
   }
   u.classe = classe;
@@ -316,7 +316,7 @@ function openUnit(id) {
     ${tipos.length ? `<div class="dgrid">${tipos.map(([k, v]) => `<div><span>${esc(k)}</span><b>${v}</b></div>`).join("")}</div>
       <p class="small muted">${Object.entries(u.ch_nat || {}).map(([k, v]) => `${esc(k)}: ${v}`).join(" · ")}<br>Origem: ${Object.entries(u.ch_origem || {}).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} ${v}`).join(" · ")}</p>` : '<p class="muted small">Nenhum chamado no período.</p>'}
     <h3>Rota e cadastro</h3>
-    <p class="small muted">${esc(u.rota || "—")} · líder ${esc(u.lider || "—")}${R ? ` · custo da rota por visita ${brl.format(R.custoVisita)}` : ""}<br>Cadastro na Stays em ${fmtData(u.criado)} · Stays ${esc(u.stays.join(", "))}</p>`;
+    <p class="small muted">${esc(u.rota || "—")} · líder ${esc(u.lider || "—")}${R ? ` · custo da rota por visita ${brl.format(R.custoVisita)}` : ""}<br>Cadastro na Stays em ${fmtData(u.criado)}${u.reativado ? ` · reativado em ${fmtData(u.inicio)} (${esc(u.inicio_motivo)})` : ""} · anúncios ${esc(u.stays.join(", "))}${u.ids_inativos ? ` + ${u.ids_inativos} já desativado(s), com as reservas do período somadas` : ""}</p>`;
   $("#drawer").hidden = false;
 }
 
@@ -690,7 +690,7 @@ function renderMetodo() {
     <li><b>Abaixo da meta:</b> lucra, mas com margem abaixo de ${params.meta}%. A ideia não é ter imóveis que só se pagam: esses recursos renderiam mais num imóvel ou empreendimento novo com margem maior.</li>
     <li><b>Atenção:</b> está na meta, mas tem chamados entre os 10% mais altos da base.</li>
     <li><b>Manter:</b> margem na meta ou acima.</li>
-    <li><b>Maturando:</b> menos de 6 meses de cadastro na Stays. Não é apontado para sair; o detalhe mostra o que a regra diria se ele já estivesse maduro.</li>
+    <li><b>Maturando:</b> menos de 6 meses desde o início do imóvel. O início é a data mais recente entre o cadastro na Stays, a data de ativação da Mastertable e a retomada das reservas depois de 3 meses ou mais sem nenhuma (reativação). Não é apontado para sair; o detalhe mostra o que a regra diria se ele já estivesse maduro.</li>
   </ol>
   <h2>Decisão do endereço</h2>
   <p>Somamos todos os imóveis do mesmo empreendimento ou endereço. <b>Sair do endereço:</b> o endereço inteiro dá prejuízo. <b>Rever endereço:</b> lucra, mas abaixo da meta. <b>Manter endereço:</b> na meta. Um endereço pode ter imóveis bons e mesmo assim não compensar no todo; e um imóvel fraco num endereço forte pode ficar se o endereço como um todo compensa.</p>
@@ -703,7 +703,7 @@ function renderMetodo() {
   <ul>
     <li>DRE por rota${P.dre.arquivo ? ` (arquivo ${esc(P.dre.arquivo)}${P.dre.enviado_por ? `, enviado por ${esc(P.dre.enviado_por)}` : ""}${P.dre.enviado_em ? ` em ${fmtData(P.dre.enviado_em.slice(0, 10))}` : ""})` : ""}: período ${periodoTxt()}, dispêndios de ${brl.format(D.total)}/mês. Um mês conta como fechado quando as rotas têm transporte e ponto de apoio lançados; os meses seguintes, até o mês atual, repetem o último mês fechado. Meses sem reservas baixadas ficam de fora.</li>
     <li>Imóveis e rotas: Mastertable do Jestor (status Ativo). Proprietário, Terceirizada e imóveis sem rota não têm custo de rota, só estrutura; estão listados na aba Sem rota.</li>
-    <li>Reservas da Stays sem canceladas e sem uso do proprietário. Em prédios (grupos-clone) a receita do grupo é dividida igualmente entre as unidades. Anúncios duplicados (individual + prédio) viram um imóvel só.</li>
+    <li>Reservas da Stays sem canceladas e sem uso do proprietário. Em prédios (grupos-clone) a receita do grupo é dividida igualmente entre as unidades. Anúncios duplicados viram um imóvel só, somando receita e chamados: os pares da planilha de/para (prédio × individual) e os anúncios ativos ou ocultos com o mesmo condomínio + apê + dono a menos de 400 m. Anúncios já desativados de um par continuam somando as reservas que tiveram no período. A média mensal usa só os meses desde o início do imóvel.</li>
     <li>Chamados: manutenções do Jestor de out/2025 a set/2026, por mês.</li>
   </ul>
   <p class="small muted">Snapshot gerado em ${fmtData(P.gerado)}.</p>`;
