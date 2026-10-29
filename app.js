@@ -214,7 +214,7 @@ function recompute() {
   }
   for (const u of U) if (!u.op) { u.classe = null; u.motivos = []; }
   montarCaptacao();
-  for (const u of OP) if (u.classe === "substituir") { const t = trocas([u])[0]; if (t) u.motivos.push(["info", `Melhor troca: uma entrada em ${t.e.nome} (${t.e.rota}) traria ${brl.format(t.dRec)}/mês a mais de receita e ${brl.format(t.dLucro)}/mês a mais de lucro (${brl.format(t.dLucro * 12)}/ano).`]); }
+  for (const u of OP) if (u.classe === "substituir") { const t = trocas([u])[0]; if (t) u.motivos.push(["info", `Melhor troca de mesmo perfil (${perfilTxt(u)}): uma entrada em ${t.e.nome} (${t.e.rota}) traria ${brl.format(t.dRec)}/mês a mais de receita e ${brl.format(t.dLucro)}/mês a mais de lucro (${brl.format(t.dLucro * 12)}/ano).`]); }
   renderAll();
 }
 
@@ -322,8 +322,16 @@ function classify(u, e, chP90) {
 }
 
 // Regiões: rotas do mesmo estado com centro a até 10 km uma da outra dividem equipe (ex.: Corais e Paredão).
-// Condomínios prioritários: endereços com 2+ imóveis maduros que dão lucro; a troca usa a média por imóvel do condomínio.
+// Condomínios prioritários: condomínios e prédios com imóveis maduros que dão lucro.
+// A troca só compara perfis parecidos: mesmo número de quartos (ou studio) e capacidade com até 1 hóspede de diferença.
 const VIZ_KM = 10;
+const perfil = (u) => (u.studio ? "Studio" : u.quartos >= 3 ? "3+ quartos" : u.quartos === 2 ? "2 quartos" : "1 quarto");
+const perfilTxt = (u) => perfil(u) + (u.hospedes ? ` · ${u.hospedes} hósp.` : "");
+const parecido = (a, b) => perfil(a) === perfil(b) && (a.hospedes == null || b.hospedes == null || Math.abs(a.hospedes - b.hospedes) <= 1);
+function media(m) {
+  const k = m.length, s = (f) => sum(m, f) / k;
+  return k ? { k, rec: s((u) => u.receitaCD), mc: s((u) => u.mc), lucro: s((u) => u.lucro), horas: s((u) => u.horas) } : null;
+}
 function montarCaptacao() {
   const cen = new Map();
   for (const r of ROT.keys()) {
@@ -344,36 +352,44 @@ function montarCaptacao() {
       const m = e.us.filter((u) => !u.novo && u.receitaCD > 0);
       // só condomínios e prédios: casa avulsa (tipo "Casa" na Mastertable) não é alvo de captação; 1 imóvel só conta se tiver empreendimento
       if (!m.length || m.every((u) => u.tipo === "Casa") || (m.length === 1 && !m[0].empreend)) return null;
-      const k = m.length, s = (f) => sum(m, f) / k;
-      const c = { e, k, rec: s((u) => u.receitaCD), mc: s((u) => u.mc), lucro: s((u) => u.lucro), horas: s((u) => u.horas) };
+      const c = { e, m, ...media(m) };
       c.lucroPct = c.rec > 0 ? c.lucro / c.rec : -Infinity;
       c.mcHora = c.horas > 0 ? c.mc / c.horas : null;
+      const pf = new Map(); m.forEach((u) => pf.set(perfil(u), (pf.get(perfil(u)) || 0) + 1));
+      c.perfis = [...pf].sort((a, b) => b[1] - a[1]).map(([p, n]) => `${p} (${n})`).join(", ");
       return c.lucro > 0 ? c : null;
     }).filter(Boolean).sort((a, b) => b.lucro - a.lucro);
     reg.conds = conds;
-    const top = conds.filter((c) => c.k >= 2).slice(0, 5);   // cenário só com condomínios de 2+ imóveis (média mais confiável)
-    reg.alvo = top.length ? { n: top.length, rec: sum(top, (c) => c.rec) / top.length, mc: sum(top, (c) => c.mc) / top.length, lucro: sum(top, (c) => c.lucro) / top.length, horas: sum(top, (c) => c.horas) / top.length } : null;
+    reg.top = conds.filter((c) => c.k >= 2).slice(0, 5);   // cenário só com condomínios de 2+ imóveis (média mais confiável)
     reg.vagas = OP.filter((u) => rs.includes(u.rota) && u.classe === "substituir");
-    CAPTAR.set(reg.nome, reg);
+  CAPTAR.set(reg.nome, reg);
   }
 }
-// Trocar os imóveis `us` por entradas (1 por 1) em cada condomínio prioritário da região: o que muda por mês para a empresa.
+// O que entraria no lugar de u num condomínio: média dos imóveis de lá com perfil parecido (null se não houver).
+const parLa = (c, u) => { const s = media(c.m.filter((x) => parecido(x, u))); return s && s.lucro > 0 ? s : null; };
+// Cenário da região para u: média dos imóveis de perfil parecido nos 5 melhores condomínios (2+ imóveis).
+const alvoU = (u) => media((REG.get(u.rota)?.top || []).flatMap((c) => c.m.filter((x) => parecido(x, u))));
+// Trocar os imóveis `us` por entradas de perfil parecido em cada condomínio da região: o que muda por mês para a empresa.
 // Fixos da rota e estrutura não mudam com a troca, então o lucro a mais é a diferença de margem de contribuição.
 function trocas(us) {
   const reg = REG.get(us[0]?.rota);
   if (!reg) return [];
-  const n = us.length, rec = sum(us, (u) => u.receitaCD), mc = sum(us, (u) => u.mc), h = sum(us, (u) => u.horas);
   const paradas = new Set(us.map((u) => u.parada));
-  return reg.conds.filter((c) => !paradas.has(c.e.id)).map((c) => ({ ...c, n, dRec: n * c.rec - rec, dLucro: n * c.mc - mc, dH: n * c.horas - h }))
-    .filter((t) => t.dLucro > 0).sort((a, b) => b.dLucro - a.dLucro);
+  return reg.conds.filter((c) => !paradas.has(c.e.id)).map((c) => {
+    const pares = us.map((u) => [u, parLa(c, u)]).filter((p) => p[1]);
+    if (!pares.length) return null;
+    return { ...c, n: pares.length, de: us.length, kPar: Math.max(...pares.map((p) => p[1].k)), lucroLa: sum(pares, (p) => p[1].lucro) / pares.length,
+      dRec: sum(pares, ([u, s]) => s.rec - u.receitaCD), dLucro: sum(pares, ([u, s]) => s.mc - u.mc), dH: sum(pares, ([u, s]) => s.horas - u.horas) };
+  }).filter((t) => t && t.dLucro > 0).sort((a, b) => b.dLucro - a.dLucro);
 }
 function tabelaTrocas(us, max = 6) {
   const ts = trocas(us).slice(0, max);
-  if (!ts.length) return '<p class="small muted">Nenhum condomínio da região dá mais lucro por imóvel que este.</p>';
+  const pf = [...new Set(us.map(perfilTxt))].join(", ");
+  if (!ts.length) return `<p class="small muted">Nenhum condomínio da região tem imóvel de perfil parecido (${esc(pf)}) dando mais lucro.</p>`;
   const reg = REG.get(us[0].rota), sg = (v) => (v >= 0 ? "+" : "−") + brl.format(Math.abs(v));
-  return `<p class="small muted">Região ${esc(reg.nome)}. Trocando ${us.length > 1 ? `os ${us.length} imóveis` : "este imóvel"} por ${us.length > 1 ? `${us.length} entradas` : "uma entrada"} no condomínio (1 por 1, pela média por imóvel de lá). Fixos da rota e estrutura não mudam com a troca.</p>
-    <div class="table-wrap"><table class="tbl"><thead><tr><th>Entrar em</th><th class="r">Lucro por imóvel lá</th><th class="r">Receita a mais/mês</th><th class="r">Lucro a mais/mês</th><th class="r">Lucro a mais/ano</th><th class="r">Horas de equipe</th></tr></thead><tbody>
-    ${ts.map((t) => `<tr><td class="nome"><b>${esc(t.e.nome)}</b><span>${esc(t.e.rota)} · ${t.k === 1 ? "1 imóvel (amostra pequena)" : t.k + " imóveis"}</span></td><td class="r">${brl.format(t.lucro)} · ${pct(t.lucroPct)}</td><td class="r">${sg(t.dRec)}</td><td class="r"><b>${sg(t.dLucro)}</b></td><td class="r">${sg(t.dLucro * 12)}</td><td class="r">${t.dH >= 0 ? "+" : "−"}${n1.format(Math.abs(t.dH))} h</td></tr>`).join("")}
+  return `<p class="small muted">Região ${esc(reg.nome)}. Só condomínios com imóvel de perfil parecido (${esc(pf)}: mesmo número de quartos e até 1 hóspede de diferença). Troca 1 por 1, pela média desses imóveis lá. Fixos da rota e estrutura não mudam com a troca.</p>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>Entrar em</th><th class="r">Lucro por imóvel parecido lá</th><th class="r">Receita a mais/mês</th><th class="r">Lucro a mais/mês</th><th class="r">Lucro a mais/ano</th><th class="r">Horas de equipe</th></tr></thead><tbody>
+    ${ts.map((t) => `<tr><td class="nome"><b>${esc(t.e.nome)}</b><span>${esc(t.e.rota)} · ${t.kPar === 1 ? "1 imóvel parecido (amostra pequena)" : t.kPar + " imóveis parecidos"}${t.n < t.de ? ` · troca ${t.n} de ${t.de}` : ""}</span></td><td class="r">${brl.format(t.lucroLa)}</td><td class="r">${sg(t.dRec)}</td><td class="r"><b>${sg(t.dLucro)}</b></td><td class="r">${sg(t.dLucro * 12)}</td><td class="r">${t.dH >= 0 ? "+" : "−"}${n1.format(Math.abs(t.dH))} h</td></tr>`).join("")}
     </tbody></table></div>`;
 }
 
@@ -416,7 +432,7 @@ function renderKpis() {
     <div class="kpi"><span class="k">Depois da estrutura CDH</span><span class="v">${pct((mc - estr) / rec)}</span><span class="s">${brl.format(mc - estr)}/mês, descontando ${brl.format(D.estruturaTotal)} de estrutura (${brl.format(D.estruturaTotal / nBase)} por imóvel)</span></div>
     <div class="kpi bad"><span class="k">Rotas abaixo da meta (${params.meta}%)</span><span class="v">${abaixo.length}</span><span class="s">${abaixo.map((R) => `${esc(R.rota.replace("Rota ", ""))} ${pct(R.mcPct)}`).join(" · ") || "nenhuma"}</span></div>
     <div class="kpi bad"><span class="k">Tirar</span><span class="v">${rem.length}</span><span class="s">imóveis: ${sum(comPlano, (R) => R.plano.k)} para ${comPlano.length} rota(s) chegarem à meta e ${sum(semPlano, (R) => R.parcial ? R.parcial.k : 0)} que dão prejuízo nas rotas que não chegam${sum(comPlano, (R) => R.pessoasMenos) ? `, com ${n1.format(sum(comPlano, (R) => R.pessoasMenos))} pessoa(s) a menos na equipe` : ""}</span></div>
-    <div class="kpi warn"><span class="k">Substituir</span><span class="v">${sub.length}</span><span class="s">imóveis que pagam o que consomem mas não pagam fixos e estrutura (${n1.format(sum(sub, (u) => u.horas))} h/mês de equipe). Trocando cada um por um imóvel na média dos 5 melhores condomínios (2+ imóveis) da região: ${brl.format(sum(sub, (u) => REG.get(u.rota)?.alvo ? REG.get(u.rota).alvo.mc - u.mc : 0))}/mês a mais de lucro (aba Onde captar)</span></div>
+    <div class="kpi warn"><span class="k">Substituir</span><span class="v">${sub.length}</span><span class="s">imóveis que pagam o que consomem mas não pagam fixos e estrutura (${n1.format(sum(sub, (u) => u.horas))} h/mês de equipe). Trocando cada um por um imóvel de perfil parecido nos 5 melhores condomínios (2+ imóveis) da região: ${brl.format(sum(sub, (u) => { const a = alvoU(u); return a ? a.mc - u.mc : 0; }))}/mês a mais de lucro (aba Onde captar)</span></div>
     <div class="kpi warn"><span class="k">Não chegam à meta tirando imóveis</span><span class="v">${semPlano.length}</span><span class="s">${semPlano.map((R) => `${esc(R.rota.replace("Rota ", ""))}${R.parcial ? ` (tirando ${R.parcial.k}: ${pct(R.parcial.pct2)})` : ""}${R.ganhoFechar > 0 ? ` (fechar: +${brl.format(R.ganhoFechar)}/mês)` : ""}`).join(" · ") || "nenhuma"}</span></div>
     <div class="kpi new"><span class="k">Maturando</span><span class="v">${mat.length}</span><span class="s">menos de 3 meses: não entram na decisão. ${OP.filter((u) => u.trocaRota).length} podem trocar de rota</span></div>`;
 }
@@ -500,7 +516,7 @@ function openUnit(id) {
   $("#drawerBody").innerHTML = `
     <h2>${esc(u.publico || u.nome)}</h2>
     <p class="muted small">${esc(u.nomes.join(" · "))}${u.dup ? " · anúncios duplicados unificados" : ""}</p>
-    <p class="small"><b>${esc(u.endNome || stopName([u]))}</b> · ${esc(u.endereco || "")} · ${esc(u.rota || "—")}</p>
+    <p class="small"><b>${esc(u.endNome || stopName([u]))}</b> · ${esc(u.endereco || "")} · ${esc(u.rota || "—")} · ${esc(perfilTxt(u))}</p>
     ${why}
     ${u.classe === "substituir" ? `<h3>Trocar por uma entrada em</h3>${tabelaTrocas([u])}` : ""}
     ${conta}
@@ -882,23 +898,29 @@ function renderCaptar() {
   if (!reg) { $("#cOut").innerHTML = ""; return; }
   const v = reg.vagas, n = v.length, rec = sum(v, (u) => u.receitaCD), mc = sum(v, (u) => u.mc), h = sum(v, (u) => u.horas), luc = sum(v, (u) => u.lucro);
   const sg = (x) => (x >= 0 ? "+" : "−") + brl.format(Math.abs(x));
-  const vagasHtml = n ? `<div class="table-wrap"><table class="tbl" id="cVagas"><thead><tr><th>Imóvel a substituir</th><th>Rota</th><th class="r">Receita</th><th class="r">Margem de contribuição</th><th class="r">Lucro</th><th class="r">Horas de equipe</th><th class="r">R$ por hora</th></tr></thead><tbody>
-    ${[...v].sort((a, b) => a.lucro - b.lucro).map((u) => `<tr data-id="${u.id}"><td class="nome"><b>${esc(u.publico || u.nome)}</b><span>${esc(u.endNome)}</span></td><td>${esc(u.rota)}</td><td class="r">${brl.format(u.receitaCD)}</td><td class="r">${brl.format(u.mc)}</td><td class="r neg">${brl.format(u.lucro)}</td><td class="r">${n1.format(u.horas)} h</td><td class="r">${brl.format(u.mcHora)}</td></tr>`).join("")}
+  // cenário: cada vaga vira a média dos imóveis de perfil parecido nos 5 melhores condomínios
+  const comAlvo = v.map((u) => [u, alvoU(u)]).filter((p) => p[1]);
+  const cen = comAlvo.length ? { n: comAlvo.length, rec: sum(comAlvo, ([u, s]) => s.rec - u.receitaCD), luc: sum(comAlvo, ([u, s]) => s.mc - u.mc) } : null;
+  const vagasHtml = n ? `<div class="table-wrap"><table class="tbl" id="cVagas"><thead><tr><th>Imóvel a substituir</th><th>Perfil</th><th>Rota</th><th class="r">Receita</th><th class="r">Margem de contribuição</th><th class="r">Lucro</th><th class="r">Horas de equipe</th><th class="r">R$ por hora</th><th>Melhor troca de mesmo perfil</th></tr></thead><tbody>
+    ${[...v].sort((a, b) => a.lucro - b.lucro).map((u) => { const t = trocas([u])[0]; return `<tr data-id="${u.id}"><td class="nome"><b>${esc(u.publico || u.nome)}</b><span>${esc(u.endNome)}</span></td><td>${esc(perfilTxt(u))}</td><td>${esc(u.rota)}</td><td class="r">${brl.format(u.receitaCD)}</td><td class="r">${brl.format(u.mc)}</td><td class="r neg">${brl.format(u.lucro)}</td><td class="r">${n1.format(u.horas)} h</td><td class="r">${brl.format(u.mcHora)}</td><td class="nome">${t ? `<b>${esc(t.e.nome)}</b><span>${sg(t.dLucro)}/mês de lucro</span>` : '<span>sem condomínio de perfil parecido</span>'}</td></tr>`; }).join("")}
     </tbody></table></div>` : '<p class="muted small">Nenhum imóvel a substituir nesta região.</p>';
-  const mRec = n ? rec / n : 0, mMc = n ? mc / n : 0;   // imóvel a substituir médio da região
-  const conds = reg.conds.map((c) => ({ ...c, dRec: c.rec - mRec, dLucro: c.mc - mMc }));
-  const A = reg.alvo, cen = A && n ? { rec: n * A.rec - rec, luc: n * A.mc - mc } : null;
+  // por condomínio: troca só as vagas de perfil parecido com algum imóvel de lá
+  const conds = reg.conds.map((c) => {
+    const pares = v.filter((u) => u.parada !== c.e.id).map((u) => [u, parLa(c, u)]).filter((p) => p[1]);
+    const q = pares.length || 1;   // por troca: média das vagas compatíveis
+    return { ...c, nV: pares.length, dRec: sum(pares, ([u, s]) => s.rec - u.receitaCD) / q, dLucro: sum(pares, ([u, s]) => s.mc - u.mc) / q };
+  });
   $("#cOut").innerHTML = `
     <div class="kpis">
       <div class="kpi warn"><span class="k">Imóveis a substituir</span><span class="v">${n}</span><span class="s">${brl.format(rec)}/mês de receita, ${brl.format(mc)} de margem de contribuição e ${brl.format(luc)} de lucro</span></div>
       <div class="kpi"><span class="k">Equipe que eles ocupam</span><span class="v">${n1.format(h)} h/mês</span><span class="s">${brl.format(h ? mc / h : 0)} de margem por hora de equipe</span></div>
-      <div class="kpi ok"><span class="k">Cenário: trocar os ${n}</span><span class="v">${cen ? sg(cen.luc) : "—"}</span><span class="s">${cen ? `de lucro por mês (${sg(cen.luc * 12)}/ano) e ${sg(cen.rec)} de receita por mês (${sg(cen.rec * 12)}/ano), se cada vaga virar um imóvel na média dos ${A.n} melhores condomínios com 2+ imóveis da lista` : "sem condomínio prioritário"}</span></div>
+      <div class="kpi ok"><span class="k">Cenário: trocar ${cen ? cen.n : 0} de ${n}</span><span class="v">${cen ? sg(cen.luc) : "—"}</span><span class="s">${cen ? `de lucro por mês (${sg(cen.luc * 12)}/ano) e ${sg(cen.rec)} de receita por mês (${sg(cen.rec * 12)}/ano), se cada um virar um imóvel de perfil parecido na média dos ${reg.top.length} melhores condomínios com 2+ imóveis${cen.n < n ? `. ${n - cen.n} não têm perfil parecido nesses condomínios` : ""}` : "sem condomínio prioritário com perfil parecido"}</span></div>
     </div>
     <h3>Condomínios prioritários para entrada (por lucro médio por imóvel)</h3>
-    <p class="small muted">Rotas da região: ${esc(reg.rotas.join(", "))}. "Por troca" = sai um imóvel a substituir médio da região (${brl.format(mRec)} de receita, ${brl.format(mMc)} de margem de contribuição) e entra um imóvel na média do condomínio. Fixos da rota e estrutura não mudam com a troca, então o lucro a mais é a diferença de margem de contribuição. Clique no condomínio para ver os imóveis.</p>
-    <div class="table-wrap"><table class="tbl" id="cConds"><thead><tr><th>#</th><th>Condomínio</th><th>Rota</th><th class="r">Imóveis</th><th class="r">Receita por imóvel</th><th class="r">Lucro por imóvel</th><th class="r">Margem de lucro</th><th class="r">R$ por hora de equipe</th><th class="r">Receita a mais por troca/mês</th><th class="r">/ano</th><th class="r">Lucro a mais por troca/mês</th><th class="r">/ano</th></tr></thead><tbody>
-    ${conds.map((c, i) => `<tr data-p="${i}"><td>${i + 1}</td><td class="nome"><b>${esc(c.e.nome)}</b><span>${esc(c.e.us[0].endereco || "")}</span></td><td>${esc(c.e.rota)}</td><td class="r">${c.k}${c.k === 1 ? '<span class="sub">amostra pequena</span>' : ""}</td><td class="r">${brl.format(c.rec)}</td><td class="r">${brl.format(c.lucro)}</td><td class="r">${pct(c.lucroPct)}</td><td class="r">${brl.format(c.mcHora)}</td>
-      ${n ? `<td class="r">${sg(c.dRec)}</td><td class="r">${sg(c.dRec * 12)}</td><td class="r ${c.dLucro < 0 ? "neg" : ""}"><b>${sg(c.dLucro)}</b></td><td class="r ${c.dLucro < 0 ? "neg" : ""}">${sg(c.dLucro * 12)}</td>` : '<td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td>'}</tr>`).join("") || '<tr><td colspan="12" class="muted">Nenhum condomínio com imóveis maduros dando lucro.</td></tr>'}
+    <p class="small muted">Rotas da região: ${esc(reg.rotas.join(", "))}. Vagas de perfil parecido = imóveis a substituir da região com o mesmo número de quartos (ou studio) e até 1 hóspede de diferença de algum imóvel de lá que dá lucro. "Por troca" = média do que muda, por mês, quando uma dessas vagas vira um imóvel parecido de lá. O total da região está no cenário acima. Fixos da rota e estrutura não mudam com a troca, então o lucro a mais é a diferença de margem de contribuição. Clique no condomínio para ver os imóveis.</p>
+    <div class="table-wrap"><table class="tbl" id="cConds"><thead><tr><th>#</th><th>Condomínio</th><th>Rota</th><th class="r">Imóveis</th><th>Perfis lá</th><th class="r">Receita por imóvel</th><th class="r">Lucro por imóvel</th><th class="r">Margem de lucro</th><th class="r">R$ por hora de equipe</th><th class="r">Vagas de perfil parecido</th><th class="r">Receita a mais por troca/mês</th><th class="r">/ano</th><th class="r">Lucro a mais por troca/mês</th><th class="r">/ano</th></tr></thead><tbody>
+    ${conds.map((c, i) => `<tr data-p="${i}"><td>${i + 1}</td><td class="nome"><b>${esc(c.e.nome)}</b><span>${esc(c.e.us[0].endereco || "")}</span></td><td>${esc(c.e.rota)}</td><td class="r">${c.k}${c.k === 1 ? '<span class="sub">amostra pequena</span>' : ""}</td><td class="small">${esc(c.perfis)}</td><td class="r">${brl.format(c.rec)}</td><td class="r">${brl.format(c.lucro)}</td><td class="r">${pct(c.lucroPct)}</td><td class="r">${brl.format(c.mcHora)}</td>
+      <td class="r">${c.nV || "—"}</td>${c.nV ? `<td class="r">${sg(c.dRec)}</td><td class="r">${sg(c.dRec * 12)}</td><td class="r ${c.dLucro < 0 ? "neg" : ""}"><b>${sg(c.dLucro)}</b></td><td class="r ${c.dLucro < 0 ? "neg" : ""}">${sg(c.dLucro * 12)}</td>` : '<td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td>'}</tr>`).join("") || '<tr><td colspan="14" class="muted">Nenhum condomínio com imóveis maduros dando lucro.</td></tr>'}
     </tbody></table></div>
     <h3>Imóveis a substituir na região</h3>
     ${vagasHtml}`;
@@ -986,8 +1008,8 @@ function renderMetodo() {
     linha("Horas de equipe", `custo da equipe usada pelo imóvel (3) ÷ ${brl2.format(salario() / 220)}/h`),
     linha("Região", `rotas do mesmo estado com centro a até ${VIZ_KM} km uma da outra; podem dividir e redimensionar equipe`),
     linha("Condomínio prioritário", "condomínio ou prédio com imóveis maduros e lucro positivo, ordenado pelo lucro médio por imóvel; casas avulsas ficam fora; com 1 imóvel só, marcado como amostra pequena"),
-    linha("Troca", "1 imóvel a substituir por 1 entrada no condomínio, pela média por imóvel de lá; lucro a mais = margem de contribuição de lá − a do imóvel que sai (fixos e estrutura não mudam)"),
-    linha("Cenário da região", "cada imóvel a substituir vira um imóvel na média dos 5 melhores condomínios da região com 2+ imóveis"),
+    linha("Troca", "1 imóvel a substituir por 1 entrada de perfil parecido no condomínio (mesmo número de quartos ou studio, até 1 hóspede de diferença; capacidade e quartos da Stays), pela média desses imóveis lá; lucro a mais = margem de contribuição de lá − a do imóvel que sai (fixos e estrutura não mudam)"),
+    linha("Cenário da região", "cada imóvel a substituir vira a média dos imóveis de perfil parecido nos 5 melhores condomínios da região com 2+ imóveis"),
     linha(pill("manter"), "fica"),
     linha(pill("maturando"), "menos de 3 meses desde o início; não entra na decisão"),
     linha(pill("atencao"), "sem reservas no período: conferir o anúncio"),
