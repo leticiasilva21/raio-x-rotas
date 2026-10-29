@@ -42,6 +42,7 @@ let ROT = new Map();   // rota -> resumo
 let D = null;          // médias da DRE no período usado
 let USADOS = [];       // meses do período: {mes, col, estimado}
 const params = { meta: 10, rateio: "igual", pkm: 50, sal: null, cons: 10, tr: 1.3 };
+const PONTO_EMPRESA = new Set(["cidade sol"]);   // ponto de apoio de Natal (Living Tirol) atende a empresa inteira: vai para a estrutura
 const salario = () => params.sal || D?.salarioCampo || 2500;
 const precoGas = (uf) => (P.combustivel || {})[uf] ?? (P.combustivel || {})._BR ?? 6.6;
 
@@ -101,47 +102,64 @@ function recompute() {
     e.kmMes = e.viagens * e.km;
     e.nome = stopName(e.us);
   }
-  // rateio do custo direto de cada rota (DRE)
+  // rateio do custo direto de cada rota (DRE), MÊS A MÊS: o custo do mês é dividido pelas visitas de todos os imóveis
+  // que estavam na rota naquele mês (inclusive os que já saíram); cada imóvel paga só os meses em que estava ativo
   ROT = new Map();
+  let apoioEmpresa = 0;
+  const visU = (u, i) => (u.serie[i][3] || 0) + ((u.ch_serie || [])[i] || 0);
   for (const rota of new Set(U.map((u) => u.rota).filter((r) => dreRota(r)))) {
-    const d = dreRota(rota);
+    const key = normRota(rota), dr = P.dre.rotas[key], Lr = (P.dre.limpeza || {})[key], rm = (P.rota_mes || {})[rota] || {};
     const us = U.filter((u) => u.rota === rota && !u.sem_stays);
-    const ops = us.filter((u) => u.op);
-    const V = sum(us, (u) => u.visitas) || 1, C = sum(us, (u) => u.ch_mes);
-    const ends = [...new Set(ops.map((u) => u.parada))].map((id) => END.get(id));
-    const K = sum(ends, (e) => e.kmMes);
-    const fk = K > 0 ? params.pkm / 100 : 0;
-    // limpeza e lavanderia da rota (equipe + terceirizados), pelas limpezas de cada imóvel
-    const Lp = D.limpeza[normRota(rota)];
-    const Z = sum(us, (u) => u.resP) || 1;
-    // deslocamento: ida e volta do ponto operacional até o endereço, por viagem (combustível + tempo da equipe)
     const ponto = P.rotas[rota]?.ponto;
-    let F = 0, Tm = 0;
-    for (const u of us) {
-      const e = END.get(u.parada);
-      u.cDescComb = u.cDescTempo = u.viagensU = 0;
-      if (!ponto || !e || u.ida_km == null || !e.visitas) continue;
-      u.viagensU = e.viagens * (u.visitas / e.visitas);
-      u.cDescComb = u.viagensU * (u.ida_km / Math.max(1, params.cons)) * precoGas(u.uf);
-      u.cDescTempo = u.viagensU * (u.ida_min * params.tr / 60) * (salario() / 220);
-      F += u.cDescComb; Tm += u.cDescTempo;
+    const apoioDaEmpresa = PONTO_EMPRESA.has(key);
+    const acc = new Map(us.map((u) => [u, { pess: 0, apoio: 0, transp: 0, imov: 0, lEq: 0, lTe: 0, comb: 0, tempo: 0, idas: 0 }]));
+    let somaCusto = 0, somaV = 0, somaZ = 0, somaLimp = 0, somaF = 0, somaT = 0;
+    for (const { mes, col } of USADOS) {
+      const i = P.meses.indexOf(mes);
+      const act = us.filter((u) => mes >= (u.inicio || u.criado || "2000-01").slice(0, 7));
+      const [resR, chR] = rm[mes] || [0, 0];
+      const Vr = Math.max(resR + chR, sum(act, (u) => visU(u, i))) || 1;
+      const Zr = Math.max(resR, sum(act, (u) => u.serie[i][3] || 0)) || 1;
+      const Cr = Math.max(chR, sum(act, (u) => (u.ch_serie || [])[i] || 0));
+      const pess = dr.pessoal?.[col] || 0, tra = dr.transporte?.[col] || 0, imo = dr.imoveis?.[col] || 0;
+      let apo = dr.ponto_apoio?.[col] || 0;
+      if (apoioDaEmpresa) { apoioEmpresa += apo; apo = 0; }
+      const eq = Lr?.equipe?.[col] || 0, te = Lr?.terceirizada?.[col] || 0;
+      // deslocamento do mês: idas do ponto operacional até cada endereço
+      let F = 0, Tm = 0;
+      if (ponto) {
+        const eV = new Map();
+        for (const u of act) eV.set(u.parada, (eV.get(u.parada) || 0) + visU(u, i));
+        for (const u of act) {
+          const v = visU(u, i), ev = eV.get(u.parada);
+          if (u.ida_km == null || !v || !ev) continue;
+          const idas = viagens(ev) * (v / ev);
+          const comb = idas * (u.ida_km / Math.max(1, params.cons)) * precoGas(u.uf);
+          const tempo = idas * (u.ida_min * params.tr / 60) * (salario() / 220);
+          const a2 = acc.get(u); a2.comb += comb; a2.tempo += tempo; a2.idas += idas; F += comb; Tm += tempo;
+        }
+      }
+      const pessR = Math.max(0, pess - Tm), traR = Math.max(0, tra - F);
+      for (const u of act) {
+        const v = visU(u, i), z = u.serie[i][3] || 0, c = (u.ch_serie || [])[i] || 0, a2 = acc.get(u);
+        a2.pess += pessR * (v / Vr); a2.apoio += apo * (v / Vr); a2.transp += traR * (v / Vr);
+        a2.imov += imo * (Cr > 0 ? c / Cr : v / Vr);
+        a2.lEq += eq * (z / Zr); a2.lTe += te * (z / Zr);
+      }
+      somaCusto += pess + apo + tra + imo; somaV += Vr; somaZ += Zr; somaLimp += eq + te; somaF += F; somaT += Tm;
     }
-    const transpResto = ponto ? Math.max(0, d.transporte - F) : d.transporte;
-    const pessResto = ponto ? Math.max(0, d.pessoal - Tm) : d.pessoal;
     for (const u of us) {
-      u.cLimpEquipe = Lp ? Lp.equipe * (u.resP / Z) : 0;
-      u.cLimpTerc = Lp ? Lp.terceirizada * (u.resP / Z) : 0;
-      const e = END.get(u.parada);
-      const kmU = e && e.visitas ? e.kmMes * (u.visitas / e.visitas) : 0;
-      u.cPessoal = pessResto * (u.visitas / V);
-      u.cApoio = d.ponto_apoio * (u.visitas / V);
-      u.cTranspVis = ponto ? transpResto * (u.visitas / V) : d.transporte * (1 - fk) * (u.visitas / V);
-      u.cTranspKm = ponto ? 0 : K > 0 ? d.transporte * fk * (kmU / K) : 0;
-      u.cImoveis = d.imoveis * (C > 0 ? u.ch_mes / C : u.visitas / V);
-      u.kmU = kmU;
+      const a2 = acc.get(u), n = u.mesesP || 1;
+      u.cPessoal = a2.pess / n; u.cApoio = a2.apoio / n; u.cTranspVis = a2.transp / n; u.cTranspKm = 0; u.cImoveis = a2.imov / n;
+      u.cLimpEquipe = a2.lEq / n; u.cLimpTerc = a2.lTe / n;
+      u.cDescComb = a2.comb / n; u.cDescTempo = a2.tempo / n; u.viagensU = a2.idas / n; u.kmU = 0;
     }
-    ROT.set(rota, { rota, d, us, V, Z, Lp, ponto, F, Tm, transpResto, pessResto, custoVisita: d.total / V, custoLimpeza: Lp ? (Lp.equipe + Lp.terceirizada) / Z : 0 });
+    const nm = USADOS.length || 1;
+    ROT.set(rota, { rota, d: D.rotas[key], us, V: somaV / nm, Z: somaZ / nm, Lp: D.limpeza[key], ponto, apoioDaEmpresa,
+      F: somaF / nm, Tm: somaT / nm, custoVisita: somaCusto / (somaV || 1), custoLimpeza: somaLimp / (somaZ || 1) });
   }
+  D.apoioEmpresa = apoioEmpresa / (USADOS.length || 1);
+  D.estruturaTotal = D.estrutura + D.apoioEmpresa;
   // estrutura
   const nImoveis = U.filter((u) => !u.sem_stays).length;
   const recTot = sum(U.filter((u) => !u.sem_stays), (u) => u.receitaCD) || 1;
@@ -149,7 +167,7 @@ function recompute() {
     if (!u.temRotaDre || u.sem_stays) { u.cPessoal = u.cApoio = u.cTranspVis = u.cTranspKm = u.cImoveis = u.kmU = u.cLimpEquipe = u.cLimpTerc = u.cDescComb = u.cDescTempo = 0; }
     u.custoRota = u.cPessoal + u.cApoio + u.cTranspVis + u.cTranspKm + u.cImoveis + u.cLimpEquipe + u.cLimpTerc + (u.cDescComb || 0) + (u.cDescTempo || 0);
     u.impostos = D.aliquota * Math.max(0, u.receitaCD - u.cLimpEquipe - u.cLimpTerc);
-    u.estrutura = u.sem_stays ? 0 : params.rateio === "igual" ? D.estrutura / nImoveis : D.estrutura * (u.receitaCD / recTot);
+    u.estrutura = u.sem_stays ? 0 : params.rateio === "igual" ? D.estruturaTotal / nImoveis : D.estruturaTotal * (u.receitaCD / recTot);
     u.lucro = u.receitaCD - u.custoRota - u.impostos - u.estrutura;
     u.margem = u.receitaCD > 0 ? u.lucro / u.receitaCD : -Infinity;
     u.contribuicao = u.receitaCD - u.custoRota - u.impostos;
@@ -259,7 +277,7 @@ function renderKpis() {
   const eSair = ends.filter((e) => e.classe === "sair"), eRever = ends.filter((e) => e.classe === "rever");
   const rec = sum(U, (u) => u.receitaCD), luc = sum(U, (u) => u.lucro);
   $("#kpis").innerHTML = `
-    <div class="kpi"><span class="k">Resultado da operação</span><span class="v">${brl.format(luc)}</span><span class="s">por mês: ${brl.format(rec)} ficam para a Carpediem − ${brl.format(sum(U, (u) => u.custoRota))} de rotas (operação, limpeza e lavanderia) − ${brl.format(sum(U, (u) => u.impostos))} de impostos − ${brl.format(D.estrutura)} de estrutura. Margem ${pct(luc / rec)}. Período ${periodoTxt()}</span></div>
+    <div class="kpi"><span class="k">Resultado da operação</span><span class="v">${brl.format(luc)}</span><span class="s">por mês: ${brl.format(rec)} ficam para a Carpediem − ${brl.format(sum(U, (u) => u.custoRota))} de rotas (operação, limpeza e lavanderia) − ${brl.format(sum(U, (u) => u.impostos))} de impostos − ${brl.format(D.estruturaTotal)} de estrutura. Margem ${pct(luc / rec)}. Período ${periodoTxt()}</span></div>
     <div class="kpi bad"><span class="k">Remover</span><span class="v">${rem.length}</span><span class="s">Dão prejuízo com custos rateados: ${brl.format(sum(rem, (u) => u.lucro))}/mês somados</span></div>
     <div class="kpi warn"><span class="k">Abaixo da meta (${params.meta}%)</span><span class="v">${ab.length}</span><span class="s">Lucram, mas pouco: ${brl.format(sum(ab, (u) => u.lucro))}/mês somados</span></div>
     <div class="kpi bad"><span class="k">Endereços</span><span class="v">${eSair.length} / ${eRever.length}</span><span class="s">${eSair.length} dão prejuízo no todo · ${eRever.length} abaixo da meta, de ${ends.length} endereços</span></div>
@@ -327,14 +345,14 @@ function openUnit(id) {
       <tr><td>Deslocamento: combustível<span class="sub">${n1.format(u.viagensU)} idas/mês × ${n1.format(u.ida_km)} km ida e volta do ponto operacional ÷ ${n1.format(params.cons)} km/l × ${brl2.format(precoGas(u.uf))}/l</span></td><td>−${brl.format(u.cDescComb)}</td></tr>
       <tr><td>Deslocamento: tempo da equipe<span class="sub">${n1.format(u.viagensU)} idas/mês × ${n1.format(u.ida_min * params.tr)} min ida e volta (com trânsito) × ${brl2.format(salario() / 220)}/h (custo médio por pessoa da equipe de campo, ${brl.format(salario())} ÷ 220 h)</span></td><td>−${brl.format(u.cDescTempo)}</td></tr>
       <tr><td>Resto do transporte da rota<span class="sub">veículos, combustível e outros da DRE que sobram depois do deslocamento acima, pelas visitas</span></td><td>−${brl.format(u.cTranspVis)}</td></tr>` : `
-      <tr><td>Transporte da rota, parte pelas visitas<span class="sub">${100 - params.pkm}% do transporte da rota</span></td><td>−${brl.format(u.cTranspVis)}</td></tr>
-      <tr><td>Transporte da rota, parte pelos km<span class="sub">${params.pkm}% do transporte, pelo km a mais que o endereço exige (${n1.format(u.kmU)} km/mês dele)</span></td><td>−${brl.format(u.cTranspKm)}</td></tr>`}
+      <tr><td>Transporte da rota<span class="sub">transporte da rota no mês × fatia de visitas (rota sem ponto operacional informado)</span></td><td>−${brl.format(u.cTranspVis)}</td></tr>
+      `}
       <tr><td>Custo com imóveis da rota<span class="sub">pelos chamados (${n2.format(u.ch_mes)}/mês)</span></td><td>${u.cImoveis < 0 ? "+" + brl.format(-u.cImoveis) : "−" + brl.format(u.cImoveis)}</td></tr>
       <tr><td>Equipe de limpeza da rota<span class="sub">pelas limpezas: ${n2.format(u.resP)} de ${R ? n1.format(R.Z) : "—"} por mês na rota</span></td><td>−${brl.format(u.cLimpEquipe)}</td></tr>
       <tr><td>Lavanderia, material e limpeza terceirizados<span class="sub">pelas limpezas (custo da rota${R && R.Lp ? `: ${brl.format(R.Lp.terceirizada)}/mês` : ""})</span></td><td>−${brl.format(u.cLimpTerc)}</td></tr>
       <tr><td>Impostos sobre vendas<span class="sub">${n1.format(D.aliquota * 100)}% (alíquota efetiva da DRE) sobre o que fica, já sem a limpeza</span></td><td>−${brl.format(u.impostos)}</td></tr>
       <tr class="tot"><td>Contribuição (depois da rota e dos impostos)</td><td class="${u.contribuicao < 0 ? "neg" : ""}">${brl.format(u.contribuicao)}</td></tr>
-      <tr><td>Estrutura da empresa<span class="sub">${params.rateio === "igual" ? `${brl.format(D.estrutura)}/mês ÷ ${U.filter((x) => !x.sem_stays).length} imóveis` : "proporcional ao que fica para a Carpediem"}</span></td><td>−${brl.format(u.estrutura)}</td></tr>
+      <tr><td>Estrutura da empresa<span class="sub">${params.rateio === "igual" ? `${brl.format(D.estruturaTotal)}/mês ÷ ${U.filter((x) => !x.sem_stays).length} imóveis${D.apoioEmpresa ? ` (inclui ${brl.format(D.apoioEmpresa)} do ponto de apoio de Natal)` : ""}` : "proporcional ao que fica para a Carpediem"}</span></td><td>−${brl.format(u.estrutura)}</td></tr>
       <tr class="tot"><td>Lucro do imóvel</td><td class="${u.lucro < 0 ? "neg" : ""}">${brl.format(u.lucro)} · ${pct(u.margem)}</td></tr>
       ${e && e.n > 1 ? `<tr class="tot"><td>Endereço inteiro (${e.n} imóveis)</td><td class="${e.resultado < 0 ? "neg" : ""}">${brl.format(e.resultado)} · ${pct(e.margem)}</td></tr>` : ""}
     </table>
@@ -738,8 +756,9 @@ function renderMetodo() {
     linha("Deslocamento: combustível", `idas × km ida e volta do ponto operacional ÷ ${n1.format(params.cons)} km/l × gasolina do estado`),
     linha("Deslocamento: tempo", `idas × minutos ida e volta × ${n1.format(params.tr)} (trânsito) × ${brl2.format(salario() / 220)}/h`),
     linha("Idas por mês", "dias com limpeza ou chamado no endereço"),
+    linha("Rateio", "mês a mês: custo da rota no mês ÷ visitas de todos os imóveis da rota naquele mês (inclusive os que já saíram); cada imóvel paga só os meses em que estava ativo"),
     linha("Pessoal da operação", "(pessoal da rota − tempo de deslocamento) × fatia de visitas"),
-    linha("Ponto de apoio", "ponto de apoio da rota × fatia de visitas"),
+    linha("Ponto de apoio", "ponto de apoio da rota × fatia de visitas (o de Natal, no Living Tirol, vai para a estrutura)"),
     linha("Resto do transporte", "(transporte da rota − combustível) × fatia de visitas"),
     linha("Custo com imóveis", "custo com imóveis da rota × fatia de chamados"),
     linha("Equipe de limpeza", "equipe de limpeza da rota × fatia de limpezas"),
@@ -748,13 +767,13 @@ function renderMetodo() {
   ])}
   ${bloco("4. Impostos e estrutura", [
     linha("Impostos", `${n1.format(D.aliquota * 100)}% × (Receita Carpediem − limpeza da rota)`),
-    linha("Estrutura", `${brl.format(D.estrutura)}/mês ÷ ${U.filter((x) => !x.sem_stays).length} imóveis = ${brl.format(D.estrutura / (U.filter((x) => !x.sem_stays).length || 1))} por imóvel`),
+    linha("Estrutura", `${brl.format(D.estruturaTotal)}/mês ÷ ${U.filter((x) => !x.sem_stays).length} imóveis${D.apoioEmpresa ? ` (inclui ${brl.format(D.apoioEmpresa)} do ponto de apoio de Natal)` : ""} = ${brl.format(D.estrutura / (U.filter((x) => !x.sem_stays).length || 1))} por imóvel`),
     linha("O que é estrutura", "operações internas, administrativo, comercial/marketing, financeiro e pessoas (backoffice)"),
   ])}
   ${bloco("5. Valores do período", [
     linha("Operações externas das rotas", `${brl.format(ext)}/mês`),
     linha("Limpeza e lavanderia das rotas", `${brl.format(lim)}/mês`),
-    linha("Estrutura", `${brl.format(D.estrutura)}/mês`),
+    linha("Estrutura", `${brl.format(D.estruturaTotal)}/mês${D.apoioEmpresa ? ` (com ${brl.format(D.apoioEmpresa)} do ponto de apoio de Natal, que atende a empresa inteira)` : ""}`),
     linha("Alíquota de impostos", `${n1.format(D.aliquota * 100)}% (ISS + PGDAS + PIS/COFINS ÷ receita bruta)`),
     linha("Custo por pessoa da equipe de campo", `${brl.format(salario())}/mês (folha + ajuda + premiação + encargos) ÷ 220 h`),
     linha("Gasolina", Object.entries(P.combustivel || {}).map(([k, v]) => `${k === "_BR" ? "outros" : k} ${brl2.format(v)}`).join(" · ")),
