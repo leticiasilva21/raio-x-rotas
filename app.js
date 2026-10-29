@@ -41,18 +41,19 @@ let END = new Map();   // endereço (parada) -> resumo
 let ROT = new Map();   // rota -> resumo
 let D = null;          // médias da DRE no período usado
 let USADOS = [];       // meses do período: {mes, col, estimado}
-const params = { meta: 10, rateio: "igual", pkm: 50 };
+const params = { meta: 10, rateio: "igual", pkm: 50, sal: 2500, cons: 10, tr: 1.3 };
+const precoGas = (uf) => (P.combustivel || {})[uf] ?? (P.combustivel || {})._BR ?? 6.6;
 
 /* ---------------- parâmetros ---------------- */
 function loadParams() {
-  try { Object.assign(params, JSON.parse(localStorage.getItem("raiox-params-v7") || "{}")); } catch (e) {}
-  const save = () => { try { localStorage.setItem("raiox-params-v7", JSON.stringify(params)); } catch (e) {} };
+  try { Object.assign(params, JSON.parse(localStorage.getItem("raiox-params-v8") || "{}")); } catch (e) {}
+  const save = () => { try { localStorage.setItem("raiox-params-v8", JSON.stringify(params)); } catch (e) {} };
   const bind = (id, k, num) => {
     const el = document.getElementById(id);
     el.value = params[k];
     el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => { params[k] = num ? parseFloat(el.value) || 0 : el.value; save(); recompute(); });
   };
-  bind("pMeta", "meta", true); bind("pRateio", "rateio", false); bind("pKm", "pkm", true);
+  bind("pMeta", "meta", true); bind("pRateio", "rateio", false); bind("pKm", "pkm", true); bind("pSal", "sal", true); bind("pCons", "cons", true); bind("pTr", "tr", true);
 }
 // dias com ao menos uma visita no mês: visitas no mesmo dia viram uma viagem só
 const viagens = (visitas) => 30 * (1 - Math.exp(-visitas / 30));
@@ -112,26 +113,40 @@ function recompute() {
     // limpeza e lavanderia da rota (equipe + terceirizados), pelas limpezas de cada imóvel
     const Lp = D.limpeza[normRota(rota)];
     const Z = sum(us, (u) => u.resP) || 1;
+    // deslocamento: ida e volta do ponto operacional até o endereço, por viagem (combustível + tempo da equipe)
+    const ponto = P.rotas[rota]?.ponto;
+    let F = 0, Tm = 0;
+    for (const u of us) {
+      const e = END.get(u.parada);
+      u.cDescComb = u.cDescTempo = u.viagensU = 0;
+      if (!ponto || !e || u.ida_km == null || !e.visitas) continue;
+      u.viagensU = e.viagens * (u.visitas / e.visitas);
+      u.cDescComb = u.viagensU * (u.ida_km / Math.max(1, params.cons)) * precoGas(u.uf);
+      u.cDescTempo = u.viagensU * (u.ida_min * params.tr / 60) * (params.sal / 220);
+      F += u.cDescComb; Tm += u.cDescTempo;
+    }
+    const transpResto = ponto ? Math.max(0, d.transporte - F) : d.transporte;
+    const pessResto = ponto ? Math.max(0, d.pessoal - Tm) : d.pessoal;
     for (const u of us) {
       u.cLimpEquipe = Lp ? Lp.equipe * (u.resP / Z) : 0;
       u.cLimpTerc = Lp ? Lp.terceirizada * (u.resP / Z) : 0;
       const e = END.get(u.parada);
       const kmU = e && e.visitas ? e.kmMes * (u.visitas / e.visitas) : 0;
-      u.cPessoal = d.pessoal * (u.visitas / V);
+      u.cPessoal = pessResto * (u.visitas / V);
       u.cApoio = d.ponto_apoio * (u.visitas / V);
-      u.cTranspVis = d.transporte * (1 - fk) * (u.visitas / V);
-      u.cTranspKm = K > 0 ? d.transporte * fk * (kmU / K) : 0;
+      u.cTranspVis = ponto ? transpResto * (u.visitas / V) : d.transporte * (1 - fk) * (u.visitas / V);
+      u.cTranspKm = ponto ? 0 : K > 0 ? d.transporte * fk * (kmU / K) : 0;
       u.cImoveis = d.imoveis * (C > 0 ? u.ch_mes / C : u.visitas / V);
       u.kmU = kmU;
     }
-    ROT.set(rota, { rota, d, us, V, Z, Lp, custoVisita: d.total / V, custoLimpeza: Lp ? (Lp.equipe + Lp.terceirizada) / Z : 0 });
+    ROT.set(rota, { rota, d, us, V, Z, Lp, ponto, F, Tm, transpResto, pessResto, custoVisita: d.total / V, custoLimpeza: Lp ? (Lp.equipe + Lp.terceirizada) / Z : 0 });
   }
   // estrutura
   const nImoveis = U.filter((u) => !u.sem_stays).length;
   const recTot = sum(U.filter((u) => !u.sem_stays), (u) => u.receitaCD) || 1;
   for (const u of U) {
-    if (!u.temRotaDre || u.sem_stays) { u.cPessoal = u.cApoio = u.cTranspVis = u.cTranspKm = u.cImoveis = u.kmU = u.cLimpEquipe = u.cLimpTerc = 0; }
-    u.custoRota = u.cPessoal + u.cApoio + u.cTranspVis + u.cTranspKm + u.cImoveis + u.cLimpEquipe + u.cLimpTerc;
+    if (!u.temRotaDre || u.sem_stays) { u.cPessoal = u.cApoio = u.cTranspVis = u.cTranspKm = u.cImoveis = u.kmU = u.cLimpEquipe = u.cLimpTerc = u.cDescComb = u.cDescTempo = 0; }
+    u.custoRota = u.cPessoal + u.cApoio + u.cTranspVis + u.cTranspKm + u.cImoveis + u.cLimpEquipe + u.cLimpTerc + (u.cDescComb || 0) + (u.cDescTempo || 0);
     u.impostos = D.aliquota * Math.max(0, u.receitaCD - u.cLimpEquipe - u.cLimpTerc);
     u.estrutura = u.sem_stays ? 0 : params.rateio === "igual" ? D.estrutura / nImoveis : D.estrutura * (u.receitaCD / recTot);
     u.lucro = u.receitaCD - u.custoRota - u.impostos - u.estrutura;
@@ -305,10 +320,14 @@ function openUnit(id) {
       <tr><td>Taxa de administração<span class="sub">${pct(u.taxa)} sobre o líquido da reserva (total − comissão do portal − taxa de limpeza)</span></td><td>${brl.format(u.admP)}</td></tr>
       <tr><td>Taxa de limpeza ${u.recolhe ? "recolhida" : "(repassada ao dono)"}</td><td>${brl.format(u.limpP)}</td></tr>
       <tr class="tot"><td>Fica para a Carpediem</td><td>${brl.format(u.receitaCD)}</td></tr>
-      <tr><td>Pessoal da operação da rota<span class="sub">${share} (${n1.format(u.visitas)} visitas/mês: limpezas + chamados)</span></td><td>−${brl.format(u.cPessoal)}</td></tr>
+      <tr><td>Pessoal da operação da rota${R && R.ponto ? " (sem o tempo de deslocamento)" : ""}<span class="sub">${share} (${n1.format(u.visitas)} visitas/mês: limpezas + chamados)</span></td><td>−${brl.format(u.cPessoal)}</td></tr>
       <tr><td>Ponto de apoio da rota<span class="sub">pelas visitas</span></td><td>−${brl.format(u.cApoio)}</td></tr>
+      ${R && R.ponto ? `
+      <tr><td>Deslocamento: combustível<span class="sub">${n1.format(u.viagensU)} idas/mês × ${n1.format(u.ida_km)} km ida e volta do ponto operacional ÷ ${n1.format(params.cons)} km/l × ${brl2.format(precoGas(u.uf))}/l</span></td><td>−${brl.format(u.cDescComb)}</td></tr>
+      <tr><td>Deslocamento: tempo da equipe<span class="sub">${n1.format(u.viagensU)} idas/mês × ${n1.format(u.ida_min * params.tr)} min ida e volta (com trânsito) × ${brl2.format(params.sal / 220)}/h (salário ${brl.format(params.sal)} ÷ 220 h)</span></td><td>−${brl.format(u.cDescTempo)}</td></tr>
+      <tr><td>Resto do transporte da rota<span class="sub">veículos, combustível e outros da DRE que sobram depois do deslocamento acima, pelas visitas</span></td><td>−${brl.format(u.cTranspVis)}</td></tr>` : `
       <tr><td>Transporte da rota, parte pelas visitas<span class="sub">${100 - params.pkm}% do transporte da rota</span></td><td>−${brl.format(u.cTranspVis)}</td></tr>
-      <tr><td>Transporte da rota, parte pelos km<span class="sub">${params.pkm}% do transporte, pelo km a mais que o endereço exige (${n1.format(u.kmU)} km/mês dele)</span></td><td>−${brl.format(u.cTranspKm)}</td></tr>
+      <tr><td>Transporte da rota, parte pelos km<span class="sub">${params.pkm}% do transporte, pelo km a mais que o endereço exige (${n1.format(u.kmU)} km/mês dele)</span></td><td>−${brl.format(u.cTranspKm)}</td></tr>`}
       <tr><td>Custo com imóveis da rota<span class="sub">pelos chamados (${n2.format(u.ch_mes)}/mês)</span></td><td>${u.cImoveis < 0 ? "+" + brl.format(-u.cImoveis) : "−" + brl.format(u.cImoveis)}</td></tr>
       <tr><td>Equipe de limpeza da rota<span class="sub">pelas limpezas: ${n2.format(u.resP)} de ${R ? n1.format(R.Z) : "—"} por mês na rota</span></td><td>−${brl.format(u.cLimpEquipe)}</td></tr>
       <tr><td>Lavanderia, material e limpeza terceirizados<span class="sub">pelas limpezas (custo da rota${R && R.Lp ? `: ${brl.format(R.Lp.terceirizada)}/mês` : ""})</span></td><td>−${brl.format(u.cLimpTerc)}</td></tr>
@@ -376,6 +395,9 @@ function renderMapa() {
     const ord = P.rotas[rota].ordem;
     L.polyline([...ord, ord[0]], { color: "#17232F", weight: 1.5, opacity: 0.45, dashArray: "4 5" }).addTo(mLayer);
   }
+  const pto = rota && P.rotas[rota]?.ponto;
+  if (pto) L.marker([pto.lat, pto.lng], { icon: L.divIcon({ className: "start-pin", iconSize: [18, 18] }) })
+    .bindTooltip(`<div class="tip-emp">Ponto operacional</div><h4>${esc(rota)}</h4>${esc(pto.endereco || "")}`, { className: "tip", direction: "top" }).addTo(mLayer);
   if (porEnd) {
     for (const e of ends) {
       const c = e.us[0];
@@ -481,6 +503,7 @@ function renderRoteiro() {
     rmapa.on("click", (e) => setStart(e.latlng.lat, e.latlng.lng, "Ponto marcado no mapa"));
   }
   fillRotaSelect($("#rRota"));
+  if (!rStart) usarPontoOperacional();
   drawRouteStops();
   setTimeout(() => rmapa.invalidateSize(), 50);
 }
@@ -491,6 +514,10 @@ function routeStops() {
     const us = OP.filter((u) => u.parada === `${rota}#${i}`);
     return { i, lat: p[0], lng: p[1], us, nome: stopName(us) };
   }).filter((s) => s.us.length && (!$("#rSemRem").checked || END.get(s.us[0].parada)?.classe !== "sair"));
+}
+function usarPontoOperacional() {
+  const p = P.rotas[$("#rRota").value]?.ponto;
+  if (p) { rStart = { lat: p.lat, lng: p.lng, label: "Ponto operacional · " + (p.endereco || "") }; $("#rEnd").value = p.endereco || ""; }
 }
 function drawRouteStops() {
   rLayer.clearLayers();
@@ -710,6 +737,8 @@ function renderMetodo() {
   <h2>Decisão do endereço</h2>
   <p>Somamos todos os imóveis do mesmo empreendimento ou endereço. <b>Sair do endereço:</b> o endereço inteiro dá prejuízo. <b>Rever endereço:</b> lucra, mas abaixo da meta. <b>Manter endereço:</b> na meta. Um endereço pode ter imóveis bons e mesmo assim não compensar no todo; e um imóvel fraco num endereço forte pode ficar se o endereço como um todo compensa.</p>
   <p>Tirar um imóvel sozinho de um endereço que continua na rota não economiza o km até lá. O detalhe de cada imóvel mostra quanto de custo realmente some se só ele sair.</p>
+  <h2>Deslocamento a partir do ponto operacional</h2>
+  <p>Cada rota tem um ponto operacional, de onde a equipe sai. Para cada endereço calculamos, por ruas reais, a ida e volta desde esse ponto (km e minutos). Custo de cada ida = combustível (km ÷ ${n1.format(params.cons)} km/l × gasolina do estado) + tempo da equipe (minutos × ${n1.format(params.tr)} de trânsito × salário de ${brl.format(params.sal)} ÷ 220 h). Visitas no mesmo endereço no mesmo dia contam uma ida só. Para não contar duas vezes, o combustível sai do transporte da rota na DRE e o tempo sai do pessoal da rota; o que sobra continua dividido pelas visitas. A Rota da Cidade do Sol ainda não tem ponto informado e usa o rateio antigo.</p>
   <h2>Troca de rota</h2>
   <p>Marcamos quem tem uma parada de outra rota a menos da metade da distância da parada mais próxima da própria rota, e comparamos o custo por visita das duas rotas (custo direto da DRE ÷ visitas da rota).</p>
   <h2>Km a mais por endereço</h2>
@@ -805,7 +834,7 @@ function wire() {
   $("#drawerClose").addEventListener("click", () => ($("#drawer").hidden = true));
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#drawer").hidden = true; });
   ["#mRota", "#mPorEnd", "#mNomes"].forEach((s) => $(s).addEventListener("change", renderMapa));
-  $("#rRota").addEventListener("change", () => { drawRouteStops(); $("#rOut").innerHTML = ""; });
+  $("#rRota").addEventListener("change", () => { usarPontoOperacional(); drawRouteStops(); $("#rOut").innerHTML = ""; });
   $("#rSemRem").addEventListener("change", drawRouteStops);
   $("#rBusca").addEventListener("click", geocode);
   $("#rEnd").addEventListener("keydown", (e) => { if (e.key === "Enter") geocode(); });
