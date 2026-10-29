@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 
@@ -35,7 +35,9 @@
         <button class="tab active" data-tab="decisao">Decisão</button>
         <button class="tab" data-tab="mapa">Mapa das rotas</button>
         <button class="tab" data-tab="roteiro">Roteirizador</button>
-        <button class="tab" data-tab="predios">Prédios</button>
+        <button class="tab" data-tab="rotas">Rotas</button>
+        <button class="tab" data-tab="predios">Endereços</button>
+        <button class="tab" data-tab="semrota">Sem rota</button>
         <button class="tab" data-tab="metodo">Como calculamos</button>
       </nav>
       <div class="top-right">
@@ -45,14 +47,9 @@
       </div>
     </div>
     <div id="paramsPanel" class="params" hidden>
-      <div class="param"><label for="pCons">Consumo do carro (km/l)</label><input id="pCons" type="number" step="0.5" min="1" value="10"></div>
-      <div class="param"><label for="pHora">Custo da equipe por hora (R$)</label><input id="pHora" type="number" step="1" min="0" value="25"></div>
-      <div class="param"><label for="pTr">Trânsito: tempo real ÷ tempo do mapa</label><input id="pTr" type="number" step="0.1" min="1" value="1.3"></div>
-      <div class="param"><label for="pPar">Tempo parado por endereço visitado (min)</label><input id="pPar" type="number" step="1" min="0" value="10"></div>
-      <div class="param"><label for="pCh">Custo extra por chamado (R$)</label><input id="pCh" type="number" step="5" min="0" value="0"></div>
-      <div class="param"><label for="pLim">Endereço "mal se paga" abaixo de (R$/mês)</label><input id="pLim" type="number" step="10" min="0" value="100"></div>
-      <div class="param"><label class="chk" for="pLav"><input id="pLav" type="checkbox"> Contar lavanderia no custo da limpeza</label></div>
-      <div class="param fuel"><label>Gasolina por estado (R$/litro, ANP out/2026)</label><div id="fuelInputs" class="fuel-grid"></div></div>
+      <div class="param"><label for="pMeta">Meta de margem por imóvel (%)</label><input id="pMeta" type="number" step="1" min="0" max="90" value="20"></div>
+      <div class="param"><label for="pRateio">Rateio da estrutura</label><select id="pRateio"><option value="igual">Igual por imóvel</option><option value="receita">Proporcional à receita</option></select></div>
+      <div class="param"><label for="pKm">% do transporte rateado pelos km a mais</label><input id="pKm" type="number" step="5" min="0" max="100" value="50"></div>
       <p class="muted small">As mudanças recalculam tudo na hora e ficam salvas só neste navegador.</p>
     </div>
   </header>
@@ -65,13 +62,20 @@
         <select id="fClasse" aria-label="Classificação">
           <option value="">Todas as classificações</option>
           <option value="remover">Remover</option>
-          <option value="renegociar">Renegociar</option>
+          <option value="abaixo">Abaixo da meta</option>
           <option value="atencao">Atenção</option>
           <option value="manter">Manter</option>
           <option value="maturando">Maturando</option>
         </select>
+        <select id="fEnd" aria-label="Decisão do endereço">
+          <option value="">Todos os endereços</option>
+          <option value="sair">Sair do endereço</option>
+          <option value="rever">Rever endereço</option>
+          <option value="manter">Manter endereço</option>
+          <option value="novo">Endereço novo</option>
+        </select>
         <input id="fBusca" type="search" placeholder="Buscar imóvel, prédio ou bairro">
-        <label class="chk"><input id="fOutra" type="checkbox"> Só os mais perto de outra rota</label>
+        <label class="chk"><input id="fOutra" type="checkbox"> Só os que podem trocar de rota</label>
         <span id="fCount" class="muted small"></span>
       </div>
       <div class="table-wrap"><table id="tbl" class="tbl"></table></div>
@@ -82,6 +86,8 @@
         <aside class="side">
           <label for="mRota" class="lbl">Rota</label>
           <select id="mRota"></select>
+          <label class="chk"><input id="mPorEnd" type="checkbox"> Ver por endereço (um ponto por empreendimento)</label>
+          <label class="chk"><input id="mNomes" type="checkbox" checked> Mostrar nomes dos empreendimentos</label>
           <div id="mLegend" class="legend"></div>
           <div id="mResumo" class="resumo"></div>
           <div id="mSim" class="sim"></div>
@@ -105,7 +111,7 @@
             <button data-v="volta" class="on">Volta à partida</button>
             <button data-v="aberta">Termina na última parada</button>
           </div>
-          <label class="chk"><input id="rSemRem" type="checkbox"> Tirar os endereços marcados "Remover"</label>
+          <label class="chk"><input id="rSemRem" type="checkbox"> Tirar os endereços que dão prejuízo</label>
           <button id="rCalc" class="btn primary wide" type="button" disabled>Calcular rota ótima</button>
           <div id="rOut" class="rout"></div>
         </aside>
@@ -113,13 +119,24 @@
       </div>
     </section>
 
+    <section id="tab-rotas" class="panel" hidden>
+      <p class="lead">Cada rota com o custo direto da DRE (jan–ago/2026) e a estrutura rateada pelos imóveis dela. Clique numa rota para ver os imóveis.</p>
+      <div class="table-wrap"><table id="rtbl" class="tbl"></table></div>
+    </section>
+
     <section id="tab-predios" class="panel" hidden>
-      <p class="lead">Cada linha é um endereço onde a equipe para. Quanto mais imóveis no mesmo endereço, menor o custo de deslocamento de cada um. Um studio que fatura pouco pode valer a pena por estar num prédio cheio.</p>
+      <p class="lead">A decisão do endereço como um todo: somamos todos os imóveis do mesmo empreendimento ou endereço. Um endereço pode ter imóveis bons e mesmo assim não compensar no todo.</p>
       <div class="filters">
         <select id="pRota" aria-label="Rota"></select>
-        <select id="pMin" aria-label="Tamanho"><option value="1">Todos os endereços</option><option value="2">2+ imóveis</option><option value="5" selected>5+ imóveis</option><option value="10">10+ imóveis</option></select>
+        <select id="pMin" aria-label="Tamanho"><option value="1">Todos os endereços</option><option value="2" selected>2+ imóveis</option><option value="5">5+ imóveis</option><option value="10">10+ imóveis</option></select>
       </div>
       <div class="table-wrap"><table id="ptbl" class="tbl"></table></div>
+    </section>
+
+    <section id="tab-semrota" class="panel" hidden>
+      <p class="lead">Imóveis ativos que não estão em nenhuma rota da Carpediem: sem rota na Mastertable, com rota "Proprietário" ou "Terceirizada", ou anunciados na Stays sem cadastro ativo na Mastertable.</p>
+      <div class="filters"><select id="sTipo" aria-label="Situação"><option value="">Todos</option></select></div>
+      <div class="table-wrap"><table id="stbl" class="tbl"></table></div>
     </section>
 
     <section id="tab-metodo" class="panel prose" hidden></section>
@@ -133,6 +150,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script type="module" src="app.js?v=6"></script>
+<script type="module" src="app.js?v=8"></script>
 </body>
 </html>

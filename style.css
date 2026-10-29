@@ -187,3 +187,14 @@ main { padding: 20px max(16px, env(safe-area-inset-left)) 40px; max-width: 1600p
 .calc td:last-child { text-align: right; font-family: var(--mono); white-space: nowrap; padding-left: 12px; }
 .calc tr.tot td { font-weight: 600; border-bottom: 0; border-top: 1px solid var(--ink-3); }
 .calc .sub { color: var(--ink-3); font-size: 11.5px; display: block; }
+
+.pill.abaixo { background: #FCE9D9; color: #B4540F; }
+.why.abaixo { background: #FCE9D9; }
+.tip-emp { font: 600 11px var(--font); text-transform: uppercase; letter-spacing: .05em; color: var(--accent); margin-bottom: 2px; max-width: 280px; white-space: normal; }
+.leaflet-tooltip.stop-label { background: rgba(255,255,255,.92); border: 1px solid var(--line); box-shadow: none; padding: 1px 6px; font: 600 11px var(--font); color: var(--ink); border-radius: 4px; }
+.leaflet-tooltip.stop-label::before { display: none; }
+.top-row { flex-wrap: nowrap; }
+.tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab { white-space: nowrap; padding-inline: 10px; }
+@media (max-width: 860px) { .top-row { flex-wrap: wrap; } .tabs { order: 3; flex-basis: 100%; } }
